@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,6 +22,7 @@ class AircraftTracker:
         ttl_s: int,
         max_track_points: int,
         min_track_distance_m: float,
+        max_events: int = 500,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
@@ -32,6 +34,8 @@ class AircraftTracker:
         self._changed: set[str] = set()
         self._removed: set[str] = set()
         self._track_appends: dict[str, list[Position]] = {}
+        self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
+        self._event_sequence = 0
         self._lock = asyncio.Lock()
 
     async def apply(self, updates: list[AircraftUpdate]) -> None:
@@ -46,10 +50,11 @@ class AircraftTracker:
                 icao for icao, state in self._aircraft.items() if state.updated_at < threshold
             ]
             for icao in expired:
-                del self._aircraft[icao]
+                state = self._aircraft.pop(icao)
                 self._changed.discard(icao)
                 self._track_appends.pop(icao, None)
                 self._removed.add(icao)
+                self._append_event(state, "lost", datetime.now(UTC))
 
     async def snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:
@@ -57,6 +62,16 @@ class AircraftTracker:
                 state.public_dict(include_track=True)
                 for state in self._aircraft.values()
             ]
+
+    async def recent_events(
+        self, after_id: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        async with self._lock:
+            events = [event for event in self._events if event["id"] > after_id]
+            return {
+                "events": events[-limit:],
+                "last_id": self._event_sequence,
+            }
 
     async def consume_delta(self) -> dict[str, Any] | None:
         async with self._lock:
@@ -86,11 +101,13 @@ class AircraftTracker:
 
     def _merge(self, update: AircraftUpdate) -> None:
         state = self._aircraft.get(update.icao)
-        if state is None:
+        is_new = state is None
+        if is_new:
             state = AircraftState(icao=update.icao, updated_at=update.received_at)
             self._aircraft[update.icao] = state
 
-        changed = False
+        changed = is_new
+        position_added = False
         for name in (
             "callsign",
             "lat",
@@ -114,11 +131,43 @@ class AircraftTracker:
             changed |= self._update_position(state, update)
             if state.track and state.track[-1].timestamp != previous_track_time:
                 self._track_appends.setdefault(state.icao, []).append(state.track[-1])
+                position_added = True
 
         if changed:
             state.revision += 1
             self._changed.add(state.icao)
             self._removed.discard(state.icao)
+            self._append_event(
+                state,
+                "detected" if is_new else ("position" if position_added else "update"),
+                update.received_at,
+            )
+
+    def _append_event(
+        self, state: AircraftState, kind: str, timestamp: datetime
+    ) -> None:
+        self._event_sequence += 1
+        self._events.append(
+            {
+                "id": self._event_sequence,
+                "timestamp": timestamp.isoformat(),
+                "kind": kind,
+                "icao": state.icao,
+                "callsign": state.callsign,
+                "altitude_ft": state.altitude_ft,
+                "speed_kt": state.speed_kt,
+                "track_deg": (
+                    state.track_deg
+                    if state.track_deg is not None
+                    else state.calculated_track_deg
+                ),
+                "vertical_rate_fpm": state.vertical_rate_fpm,
+                "lat": state.lat,
+                "lon": state.lon,
+                "squawk": state.squawk,
+                "text": _event_text(state, kind),
+            }
+        )
 
     def _update_position(self, state: AircraftState, update: AircraftUpdate) -> bool:
         assert update.lat is not None and update.lon is not None
@@ -172,3 +221,24 @@ class AircraftTracker:
         if len(state.track) > self.max_track_points:
             del state.track[: len(state.track) - self.max_track_points]
         return True
+
+
+def _event_text(state: AircraftState, kind: str) -> str:
+    prefix = {
+        "detected": "Обнаружен борт",
+        "position": "Позиция",
+        "update": "Обновление",
+        "lost": "Борт пропал",
+    }.get(kind, "Сообщение")
+    identity = f"{state.icao.upper()} {state.callsign or ''}".strip()
+    details: list[str] = []
+    if state.altitude_ft is not None:
+        details.append(f"{state.altitude_ft} ft")
+    if state.speed_kt is not None:
+        details.append(f"{state.speed_kt:.0f} kt")
+    if state.lat is not None and state.lon is not None:
+        details.append(f"{state.lat:.5f}, {state.lon:.5f}")
+    if state.squawk:
+        details.append(f"SQ {state.squawk}")
+    suffix = f" · {' · '.join(details)}" if details else ""
+    return f"{prefix}: {identity}{suffix}"

@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.aircraft_ttl_s,
         settings.track_max_points,
         settings.track_min_distance_m,
+        settings.event_log_size,
     )
     hub = BroadcastHub()
     radio = RadioMonitor(
@@ -115,6 +116,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "timestamp": datetime.now(UTC).isoformat(),
             "aircraft": await tracker.snapshot(),
         }
+
+    @app.get("/api/adsb/messages")
+    async def adsb_messages(
+        after_id: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, object]:
+        return await tracker.recent_events(after_id=after_id, limit=limit)
 
     @app.get("/api/layers")
     async def layer_list() -> list[dict[str, object]]:

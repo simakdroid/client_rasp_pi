@@ -33,6 +33,8 @@
     selectedIcao: null,
     search: "",
     healthSample: null,
+    journalEvents: [],
+    lastEventId: 0,
   };
 
   const el = {};
@@ -64,12 +66,18 @@
     configureStation();
     setRadioAvailable(Boolean(state.config.radio?.enabled));
     createMap();
-    await Promise.allSettled([loadInitialAircraft(), loadLayers(), loadRadioChannels()]);
+    await Promise.allSettled([
+      loadInitialAircraft(),
+      loadAdsbMessages(),
+      loadLayers(),
+      loadRadioChannels(),
+    ]);
     connectAircraftSocket();
     void refreshHealth();
     window.setInterval(updateRate, 1000);
     window.setInterval(loadRadioChannels, 5000);
     window.setInterval(refreshHealth, 5000);
+    window.setInterval(loadAdsbMessages, 1000);
   }
 
   function cacheElements() {
@@ -80,6 +88,7 @@
       "ofm-option", "fit-aircraft", "toggle-tracks", "reload-layers", "reload-radio",
       "receiver-card", "receiver-status", "receiver-messages", "receiver-rate",
       "receiver-json-age", "receiver-aircraft",
+      "journal-list", "journal-count", "clear-journal",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -98,6 +107,10 @@
     el["toggle-tracks"].addEventListener("click", toggleTracks);
     el["reload-layers"].addEventListener("click", loadLayers);
     el["reload-radio"].addEventListener("click", loadRadioChannels);
+    el["clear-journal"].addEventListener("click", () => {
+      state.journalEvents = [];
+      renderJournal();
+    });
   }
 
   function switchTab(name) {
@@ -592,6 +605,64 @@
     } catch (_error) {
       // WebSocket owns the connection indicator if the health endpoint is unavailable.
     }
+  }
+
+  async function loadAdsbMessages() {
+    try {
+      const payload = await fetchJson(
+        `/api/adsb/messages?after_id=${state.lastEventId}&limit=100`,
+      );
+      const events = Array.isArray(payload.events) ? payload.events : [];
+      state.lastEventId = Math.max(
+        state.lastEventId,
+        finite(payload.last_id) ?? 0,
+        ...events.map((event) => finite(event.id) ?? 0),
+      );
+      if (events.length) {
+        const knownIds = new Set(state.journalEvents.map((event) => event.id));
+        state.journalEvents.push(...events.filter((event) => !knownIds.has(event.id)));
+        state.journalEvents = state.journalEvents.slice(-200);
+        renderJournal();
+      }
+    } catch (error) {
+      if (!state.journalEvents.length) {
+        el["journal-list"].replaceChildren(
+          emptyNode("Журнал ADS-B недоступен", true),
+        );
+      }
+      console.warn("Ошибка загрузки журнала ADS-B:", error);
+    }
+  }
+
+  function renderJournal() {
+    el["journal-count"].textContent = String(state.journalEvents.length);
+    if (!state.journalEvents.length) {
+      el["journal-list"].replaceChildren(
+        emptyNode("Ожидание декодированных сообщений…"),
+      );
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    [...state.journalEvents].reverse().forEach((event) => {
+      const entry = document.createElement("article");
+      entry.className = "journal-entry";
+      entry.dataset.kind = text(event.kind, "update");
+
+      const timestamp = document.createElement("time");
+      const date = new Date(event.timestamp);
+      timestamp.textContent = Number.isNaN(date.getTime())
+        ? "—"
+        : date.toLocaleTimeString("ru-RU");
+
+      const identity = document.createElement("strong");
+      identity.textContent = `${text(event.icao, "------").toUpperCase()} ${text(event.callsign, "")}`.trim();
+
+      const message = document.createElement("p");
+      message.textContent = text(event.text, "Декодированное обновление");
+      entry.append(timestamp, identity, message);
+      fragment.append(entry);
+    });
+    el["journal-list"].replaceChildren(fragment);
   }
 
   async function loadLayers() {

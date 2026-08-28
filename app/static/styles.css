@@ -177,7 +177,12 @@ h1, h2, h3, p { margin: 0; }
   box-shadow: -6px 0 20px rgba(0, 0, 0, .18);
 }
 
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+.tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  border-bottom: 1px solid var(--line);
+}
 .tab {
   border: 0;
   border-bottom: 2px solid transparent;
@@ -196,6 +201,16 @@ h1, h2, h3, p { margin: 0; }
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { font-size: 14px; }
 .panel-heading > span {
+  min-width: 25px;
+  padding: 3px 7px;
+  border-radius: 10px;
+  background: #19324a;
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+.panel-heading__actions { display: flex; align-items: center; gap: 10px; }
+.panel-heading__actions > span {
   min-width: 25px;
   padding: 3px 7px;
   border-radius: 10px;
@@ -250,6 +265,44 @@ h1, h2, h3, p { margin: 0; }
   color: var(--muted);
   font-size: 9px;
   text-transform: uppercase;
+}
+
+.journal-hint {
+  margin: 7px 0 11px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.journal-list { display: grid; align-content: start; gap: 6px; }
+.journal-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 9px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  background: var(--panel-2);
+}
+.journal-entry[data-kind="detected"] { border-left-color: var(--success); }
+.journal-entry[data-kind="lost"] { border-left-color: var(--danger); }
+.journal-entry time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+.journal-entry strong {
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-entry p {
+  grid-column: 1 / -1;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .text-button { padding: 4px 0; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }

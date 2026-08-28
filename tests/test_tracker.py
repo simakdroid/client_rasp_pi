@@ -37,3 +37,9 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
     assert "track" not in aircraft
     assert aircraft["calculated_track_deg"] is not None
     assert aircraft["distance_km"] > 0
+
+    journal = await tracker.recent_events()
+    assert len(journal["events"]) == 2
+    assert journal["events"][0]["kind"] == "detected"
+    assert journal["events"][1]["kind"] == "position"
+    assert "ABC123" in journal["events"][1]["text"]

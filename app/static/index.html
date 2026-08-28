@@ -47,6 +47,7 @@
       <aside class="sidebar">
         <nav class="tabs" aria-label="Разделы панели">
           <button class="tab is-active" type="button" data-tab="aircraft">Борта</button>
+          <button class="tab" type="button" data-tab="journal">Журнал</button>
           <button class="tab" type="button" data-tab="layers">Слои</button>
           <button class="tab" type="button" data-tab="radio">Радио</button>
         </nav>
@@ -75,6 +76,20 @@
           </label>
           <div id="aircraft-list" class="aircraft-list">
             <p class="empty-state">Ожидание данных о бортах…</p>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-journal">
+          <div class="panel-heading">
+            <h2>Декодированные сообщения</h2>
+            <div class="panel-heading__actions">
+              <span id="journal-count">0</span>
+              <button id="clear-journal" class="text-button" type="button">Очистить</button>
+            </div>
+          </div>
+          <p class="journal-hint">Показываются изменения данных бортов, а не сырые Mode-S hex-пакеты.</p>
+          <div id="journal-list" class="journal-list" aria-live="polite">
+            <p class="empty-state">Ожидание декодированных сообщений…</p>
           </div>
         </section>
 

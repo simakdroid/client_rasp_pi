@@ -15,8 +15,10 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert health.status_code == 200
         assert health.json()["adsb"]["status"] == "unavailable"
         assert client.get("/api/aircraft").json()["aircraft"] == []
+        assert client.get("/api/adsb/messages").json()["events"] == []
         page = client.get("/").text
         assert "Авиационный монитор" in page
         assert 'id="receiver-card"' in page
+        assert 'id="panel-journal"' in page
         assert client.get("/app.js").status_code == 200
         assert client.get("/vendor/leaflet/leaflet.css").status_code == 200

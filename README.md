@@ -123,6 +123,7 @@ curl http://127.0.0.1:8080/api/health
 
 - `GET /api/config` — станция и URL подложек.
 - `GET /api/aircraft` — полный снимок бортов и треков.
+- `GET /api/adsb/messages` — ограниченный журнал декодированных обновлений.
 - `WS /ws/aircraft` — снимок и дельты.
 - `GET /api/layers` / `GET /api/layers/{id}` — GIS-каталог/GeoJSON.
 - `GET /api/tiles/{id}/{z}/{x}/{y}` — локальный MBTiles.
