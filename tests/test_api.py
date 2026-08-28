@@ -8,7 +8,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
     settings = Settings(
         layers_dir=tmp_path,
         readsb_json_path=tmp_path / "missing-aircraft.json",
-        radio_channels_json="[]",
+        coverage_path=tmp_path / "coverage-rose.json",
     )
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
@@ -33,5 +33,11 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "aircraft-card__squawk" in page
         assert "Время записей — UTC" in page
         assert client.get("/api/aircraft").json()["archived"] == []
+        coverage = client.get("/api/coverage").json()
+        assert coverage["points"] == []
+        assert coverage["samples"] == 0
+        assert client.post("/api/coverage/reset").json()["samples"] == 0
+        assert 'id="toggle-coverage"' in page
+        assert 'id="coverage-stats"' in page
         assert client.get("/app.js").status_code == 200
         assert client.get("/vendor/leaflet/leaflet.css").status_code == 200

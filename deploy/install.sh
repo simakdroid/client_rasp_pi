@@ -44,6 +44,7 @@ chown -R root:adsb-vhf /opt/adsb-vhf
 find /opt/adsb-vhf -type d -exec chmod 0755 {} +
 find /opt/adsb-vhf -type f -exec chmod u=rw,go=r {} +
 find /opt/adsb-vhf/.venv/bin -type f -exec chmod 0755 {} +
+install -d -m0775 -o adsb-vhf -g adsb-vhf /opt/adsb-vhf/data
 
 install -d -m0755 -o root -g root /etc/adsb-vhf
 if [ ! -e /etc/adsb-vhf/rtl-airband.env ]; then

@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict, deque
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from pyproj import Geod
 
+from .coverage import CoverageRose
 from .gis import LayerManager
 from .models import AircraftState, AircraftUpdate, Position
 
@@ -24,6 +26,8 @@ class AircraftTracker:
         min_track_distance_m: float,
         max_events: int = 500,
         max_archive: int = 100,
+        coverage_path: Path | None = None,
+        max_coverage_km: float = 450,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
@@ -41,6 +45,9 @@ class AircraftTracker:
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._event_sequence = 0
         self._lock = asyncio.Lock()
+        self._coverage = CoverageRose(
+            station_lat, station_lon, coverage_path, max_coverage_km
+        )
 
     async def apply(self, updates: list[AircraftUpdate]) -> None:
         async with self._lock:
@@ -61,6 +68,20 @@ class AircraftTracker:
                 self._removed.add(icao)
                 self._append_event(state, "lost", now)
                 self._store_archive(state, now)
+
+    async def coverage_snapshot(self) -> dict[str, Any]:
+        async with self._lock:
+            return self._coverage.snapshot()
+
+    async def reset_coverage(self) -> dict[str, Any]:
+        async with self._lock:
+            self._coverage.reset()
+            self._coverage.flush()
+            return self._coverage.snapshot()
+
+    async def flush_coverage(self) -> None:
+        async with self._lock:
+            self._coverage.flush()
 
     async def snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:
@@ -242,9 +263,11 @@ class AircraftTracker:
     def _update_position(self, state: AircraftState, update: AircraftUpdate) -> bool:
         assert update.lat is not None and update.lon is not None
         changed = False
-        _, _, distance_m = GEOD.inv(
+        azimuth_deg, _, distance_m = GEOD.inv(
             self.station_lon, self.station_lat, update.lon, update.lat
         )
+        if not state.on_ground:
+            self._coverage.observe(azimuth_deg, distance_m)
         distance_km = round(distance_m / 1000, 2)
         if state.distance_km != distance_km:
             state.distance_km = distance_km

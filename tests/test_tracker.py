@@ -52,6 +52,10 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
     )
     assert older["events"][0]["kind"] == "detected"
     assert older["has_more"] is False
+    coverage = await tracker.coverage_snapshot()
+    assert coverage["samples"] >= 1
+    assert coverage["filled_bins"] >= 1
+    assert coverage["points"]
 
 
 @pytest.mark.asyncio

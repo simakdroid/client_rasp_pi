@@ -37,6 +37,8 @@
                   aria-label="Показать все борта">⌖</button>
           <button id="toggle-tracks" class="icon-button is-active" type="button" title="Показать или скрыть треки"
                   aria-pressed="true" aria-label="Показать или скрыть треки">⌁</button>
+          <button id="toggle-coverage" class="icon-button is-active" type="button" title="Роза покрытия"
+                  aria-pressed="true" aria-label="Показать или скрыть розу покрытия">◎</button>
         </div>
         <div class="altitude-legend" aria-label="Легенда высоты">
           <span>Высота</span>
@@ -106,6 +108,15 @@
             <h3>Подложка</h3>
             <label class="option"><input type="radio" name="basemap" value="osm" checked><span>OpenStreetMap</span></label>
             <label class="option" id="ofm-option" hidden><input type="radio" name="basemap" value="ofm"><span>OpenFlightMaps</span></label>
+          </div>
+          <div class="layer-group">
+            <h3>Покрытие</h3>
+            <label class="option">
+              <input id="coverage-visible" type="checkbox" checked>
+              <span>Роза покрытия</span>
+            </label>
+            <p class="coverage-stats" id="coverage-stats">Накопление начнётся с первым бортом.</p>
+            <button id="reset-coverage" class="text-button" type="button">Сбросить розу</button>
           </div>
           <div class="layer-group">
             <h3>GeoJSON / KML / MBTiles</h3>

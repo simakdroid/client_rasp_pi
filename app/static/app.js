@@ -32,6 +32,9 @@
     reconnectTimer: null,
     reconnectAttempt: 0,
     tracksVisible: true,
+    coverageVisible: true,
+    coverageLayer: null,
+    coverageRevision: -1,
     mapUserMoved: false,
     autoFitting: false,
     selectedIcao: null,
@@ -84,12 +87,14 @@
       loadJournal(),
       loadLayers(),
       loadRadioChannels(),
+      loadCoverage(),
     ]);
     connectAircraftSocket();
     void refreshHealth();
     window.setInterval(loadRadioChannels, 5000);
     window.setInterval(refreshHealth, 5000);
     window.setInterval(loadJournal, 1000);
+    window.setInterval(loadCoverage, 5000);
   }
 
   function cacheElements() {
@@ -98,7 +103,9 @@
       "visible-count", "aircraft-search", "aircraft-list",
       "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
-      "ofm-option", "fit-aircraft", "toggle-tracks", "reload-layers", "reload-radio",
+      "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-coverage",
+      "coverage-visible", "coverage-stats", "reset-coverage",
+      "reload-layers", "reload-radio",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
       "journal-pager", "journal-range", "journal-newer", "journal-older",
     ].forEach((id) => { el[id] = byId(id); });
@@ -117,6 +124,11 @@
     });
     el["fit-aircraft"].addEventListener("click", fitAircraft);
     el["toggle-tracks"].addEventListener("click", toggleTracks);
+    el["toggle-coverage"].addEventListener("click", () => setCoverageVisible(!state.coverageVisible));
+    el["coverage-visible"].addEventListener("change", () => {
+      setCoverageVisible(el["coverage-visible"].checked);
+    });
+    el["reset-coverage"].addEventListener("click", resetCoverage);
     el["reload-layers"].addEventListener("click", loadLayers);
     el["reload-radio"].addEventListener("click", loadRadioChannels);
     el["clear-journal"].addEventListener("click", clearJournal);
@@ -179,6 +191,9 @@
       zoomControl: true,
       preferCanvas: true,
     });
+    state.map.createPane("coverage");
+    state.map.getPane("coverage").style.zIndex = 350;
+    state.map.getPane("coverage").style.pointerEvents = "none";
     state.map.on("dragstart", () => {
       if (!state.autoFitting) state.mapUserMoved = true;
     });
@@ -558,6 +573,92 @@
     });
     el["toggle-tracks"].classList.toggle("is-active", state.tracksVisible);
     el["toggle-tracks"].setAttribute("aria-pressed", String(state.tracksVisible));
+  }
+
+  function setCoverageVisible(visible) {
+    state.coverageVisible = Boolean(visible);
+    el["toggle-coverage"].classList.toggle("is-active", state.coverageVisible);
+    el["toggle-coverage"].setAttribute("aria-pressed", String(state.coverageVisible));
+    el["coverage-visible"].checked = state.coverageVisible;
+    if (!state.coverageLayer || !state.map) return;
+    if (state.coverageVisible && !state.map.hasLayer(state.coverageLayer)) {
+      state.coverageLayer.addTo(state.map);
+    }
+    if (!state.coverageVisible && state.map.hasLayer(state.coverageLayer)) {
+      state.map.removeLayer(state.coverageLayer);
+    }
+  }
+
+  async function loadCoverage() {
+    try {
+      const payload = await fetchJson("/api/coverage");
+      renderCoverage(payload);
+    } catch (error) {
+      console.warn("Ошибка загрузки розы покрытия:", error);
+    }
+  }
+
+  async function resetCoverage() {
+    if (!window.confirm("Сбросить накопленную розу покрытия?")) return;
+    try {
+      const payload = await fetchJson("/api/coverage/reset", { method: "POST" });
+      state.coverageRevision = -1;
+      renderCoverage(payload);
+    } catch (error) {
+      console.warn("Не удалось сбросить розу покрытия:", error);
+    }
+  }
+
+  function renderCoverage(payload) {
+    const stats = formatCoverageStats(payload);
+    if (el["coverage-stats"]) el["coverage-stats"].textContent = stats;
+    const revision = finite(payload?.revision) ?? 0;
+    const points = Array.isArray(payload?.points) ? payload.points.filter((point) => (
+      Array.isArray(point) && finite(point[0]) !== null && finite(point[1]) !== null
+    )) : [];
+    if (revision === state.coverageRevision && state.coverageLayer) return;
+    state.coverageRevision = revision;
+    if (!state.map) return;
+    if (points.length < 4) {
+      if (state.coverageLayer) {
+        state.map.removeLayer(state.coverageLayer);
+        state.coverageLayer = null;
+      }
+      return;
+    }
+    if (state.coverageLayer) {
+      state.coverageLayer.setLatLngs(points);
+    } else {
+      state.coverageLayer = L.polygon(points, {
+        pane: "coverage",
+        color: "#ffc857",
+        weight: 2,
+        fillColor: "#ffc857",
+        fillOpacity: .14,
+        interactive: false,
+      });
+    }
+    setCoverageVisible(state.coverageVisible);
+  }
+
+  function formatCoverageStats(payload) {
+    const samples = finite(payload?.samples) ?? 0;
+    const filled = finite(payload?.filled_bins) ?? 0;
+    const maxRange = finite(payload?.max_range_km);
+    if (!samples) return "Накопление начнётся с первым бортом.";
+    const rangeText = maxRange === null ? "—" : formatDistance(maxRange);
+    let started = "";
+    if (payload?.started_at) {
+      const date = new Date(payload.started_at);
+      if (!Number.isNaN(date.getTime())) {
+        started = ` с ${date.toLocaleDateString("ru-RU", {
+          day: "2-digit",
+          month: "2-digit",
+          timeZone: "UTC",
+        })} ${formatUtcTime(date)} UTC`;
+      }
+    }
+    return `Макс. ${rangeText} · ${filled} из 360 направлений · ${samples} точек${started}`;
   }
 
   function fitAircraft() {
@@ -1195,12 +1296,15 @@
     return node;
   }
 
-  async function fetchJson(url) {
+  async function fetchJson(url, options = {}) {
     const response = await fetch(url, {
       headers: { Accept: "application/json" },
       cache: "no-store",
+      ...options,
     });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) return {};
     return response.json();
   }
 })();

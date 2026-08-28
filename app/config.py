@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     track_min_distance_m: float = Field(default=30, ge=0, le=10000)
     event_log_size: int = Field(default=500, ge=10, le=10000)
     archive_max_aircraft: int = Field(default=100, ge=0, le=1000)
+    coverage_path: Path = Path(__file__).resolve().parent.parent / "data" / "coverage-rose.json"
+    coverage_max_km: float = Field(default=450, ge=10, le=2000)
 
     websocket_interval_s: float = Field(default=0.75, ge=0.2, le=5)
     layers_dir: Path = Path(__file__).resolve().parent.parent / "data" / "layers"

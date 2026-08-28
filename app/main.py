@@ -36,6 +36,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.track_min_distance_m,
         settings.event_log_size,
         settings.archive_max_aircraft,
+        settings.coverage_path,
+        settings.coverage_max_km,
     )
     hub = BroadcastHub()
     raw_messages = RawMessageLog(settings.raw_log_size)
@@ -72,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await tracker.flush_coverage()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -84,7 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
-            allow_methods=["GET"],
+            allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
 
@@ -118,6 +121,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "websocket_interval_ms": round(settings.websocket_interval_s * 1000),
         }
+
+    @app.get("/api/coverage")
+    async def coverage_rose() -> dict[str, object]:
+        return await tracker.coverage_snapshot()
+
+    @app.post("/api/coverage/reset")
+    async def reset_coverage_rose() -> dict[str, object]:
+        return await tracker.reset_coverage()
 
     @app.get("/api/aircraft")
     async def aircraft() -> dict[str, object]:
@@ -253,6 +264,7 @@ async def _maintenance_loop(tracker: AircraftTracker, layers: LayerManager) -> N
             layer_refresh_tick = 0
             with contextlib.suppress(OSError, ValueError):
                 await asyncio.to_thread(layers.refresh)
+            await tracker.flush_coverage()
 
 
 app = create_app()

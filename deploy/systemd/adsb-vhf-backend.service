@@ -19,6 +19,7 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadOnlyPaths=-/run/readsb
+ReadWritePaths=-/opt/adsb-vhf/data
 
 [Install]
 WantedBy=multi-user.target
