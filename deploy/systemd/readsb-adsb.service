@@ -1,0 +1,24 @@
+[Unit]
+Description=readsb ADS-B decoder (RTL-SDR serial 1090)
+Documentation=https://github.com/wiedehopf/readsb
+After=network.target
+Conflicts=readsb.service dump1090-fa.service
+
+[Service]
+Type=simple
+User=readsb
+Group=plugdev
+EnvironmentFile=/etc/default/readsb-adsb
+RuntimeDirectory=readsb
+RuntimeDirectoryMode=0755
+ExecStart=/usr/local/lib/adsb-vhf/start-readsb.sh
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/readsb
+
+[Install]
+WantedBy=multi-user.target

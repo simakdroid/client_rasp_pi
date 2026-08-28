@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, Field, HttpUrl
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class RadioChannel(BaseModel):
+    id: str
+    name: str
+    frequency_mhz: float = Field(ge=118.0, le=137.0)
+    stream_url: str
+    status_url: str | None = None
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="AIRMON_",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
+
+    app_name: str = "Raspberry Pi Air Monitor"
+    host: str = "127.0.0.1"
+    port: int = Field(default=8080, ge=1, le=65535)
+
+    station_lat: float = Field(default=55.7558, ge=-90, le=90)
+    station_lon: float = Field(default=37.6173, ge=-180, le=180)
+    station_name: str = "Базовая станция"
+
+    adsb_source: Literal["json", "sbs"] = "json"
+    readsb_json_path: Path = Path("/run/readsb/aircraft.json")
+    sbs_host: str = "127.0.0.1"
+    sbs_port: int = Field(default=30003, ge=1, le=65535)
+    adsb_poll_interval_s: float = Field(default=0.75, ge=0.2, le=10)
+    aircraft_ttl_s: int = Field(default=60, ge=5, le=3600)
+    track_max_points: int = Field(default=300, ge=2, le=5000)
+    track_min_distance_m: float = Field(default=30, ge=0, le=10000)
+
+    websocket_interval_s: float = Field(default=0.75, ge=0.2, le=5)
+    layers_dir: Path = Path(__file__).resolve().parent.parent / "data" / "layers"
+    static_dir: Path = Path(__file__).resolve().parent / "static"
+    cors_origins: list[str] = []
+
+    osm_url: str = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+    ofm_url: str | None = None
+    radio_channels_json: str = "[]"
+    radio_stats_path: Path | None = Path("/run/rtl-airband/stats.prom")
+    radio_auto_detect: bool = True
+    radio_min_rtl_receivers: int = Field(default=2, ge=1, le=16)
+    radio_receiver_serial: str = "0118"
+    usb_sysfs_path: Path = Path("/sys/bus/usb/devices")
+    icecast_status_url: HttpUrl | None = None
+
+    @property
+    def radio_channels(self) -> list[RadioChannel]:
+        return [RadioChannel.model_validate(item) for item in self._radio_json()]
+
+    def _radio_json(self) -> list[dict[str, object]]:
+        import json
+
+        value = json.loads(self.radio_channels_json)
+        if not isinstance(value, list):
+            raise ValueError("AIRMON_RADIO_CHANNELS_JSON must contain a JSON array")
+        return value
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

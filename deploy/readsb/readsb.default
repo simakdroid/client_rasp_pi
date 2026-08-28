@@ -1,0 +1,8 @@
+# Installed as /etc/default/readsb-adsb.
+# With one RTL-SDR the launcher uses that device for ADS-B. With two or more it
+# selects this preferred EEPROM serial. Never use unstable enumeration indexes.
+ADSB_PREFERRED_SERIAL="1090"
+RECEIVER_OPTIONS="--gain -10"
+DECODER_OPTIONS="--max-range 450 --fix --lat 0.000000 --lon 0.000000"
+NET_OPTIONS="--net --net-heartbeat 60 --net-ro-size 1200 --net-ro-interval 0.05 --net-ri-port 30001 --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104 --net-bo-port 30005"
+JSON_OPTIONS="--write-json /run/readsb --write-json-every 1"

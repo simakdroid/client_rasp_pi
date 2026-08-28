@@ -1,0 +1,74 @@
+# Rendered by rtl-airband.service to /run/rtl-airband/rtl_airband.conf.
+# Keep all channels within the usable bandwidth of one RTL-SDR.
+stats_filepath = "/run/rtl-airband/stats.prom";
+
+devices:
+(
+  {
+    type = "rtlsdr";
+    serial = "0118";
+    gain = 28;
+    correction = 0;
+    mode = "multichannel";
+    sample_rate = 2.56;
+    centerfreq = 118.600;
+
+    channels:
+    (
+      {
+        freq = 118.100;
+        modulation = "am";
+        squelch_snr_threshold = 8.0;
+        outputs:
+        (
+          {
+            type = "icecast";
+            server = "${ICECAST_HOST}";
+            port = ${ICECAST_PORT};
+            mountpoint = "vhf-118100.mp3";
+            name = "VHF AM 118.100 MHz";
+            genre = "Aviation";
+            username = "${ICECAST_USER}";
+            password = "${ICECAST_PASSWORD}";
+          }
+        );
+      },
+      {
+        freq = 118.500;
+        modulation = "am";
+        squelch_snr_threshold = 8.0;
+        outputs:
+        (
+          {
+            type = "icecast";
+            server = "${ICECAST_HOST}";
+            port = ${ICECAST_PORT};
+            mountpoint = "vhf-118500.mp3";
+            name = "VHF AM 118.500 MHz";
+            genre = "Aviation";
+            username = "${ICECAST_USER}";
+            password = "${ICECAST_PASSWORD}";
+          }
+        );
+      },
+      {
+        freq = 119.100;
+        modulation = "am";
+        squelch_snr_threshold = 8.0;
+        outputs:
+        (
+          {
+            type = "icecast";
+            server = "${ICECAST_HOST}";
+            port = ${ICECAST_PORT};
+            mountpoint = "vhf-119100.mp3";
+            name = "VHF AM 119.100 MHz";
+            genre = "Aviation";
+            username = "${ICECAST_USER}";
+            password = "${ICECAST_PASSWORD}";
+          }
+        );
+      }
+    );
+  }
+);

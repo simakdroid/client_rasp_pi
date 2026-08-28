@@ -1,0 +1,28 @@
+{
+  "type": "FeatureCollection",
+  "name": "Демонстрационный сектор",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "TEST SECTOR",
+        "geofence": true,
+        "min_alt_ft": 0,
+        "max_alt_ft": 12000,
+        "color": "#ff7800"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [37.30, 55.60],
+            [37.95, 55.60],
+            [37.95, 55.90],
+            [37.30, 55.90],
+            [37.30, 55.60]
+          ]
+        ]
+      }
+    }
+  ]
+}

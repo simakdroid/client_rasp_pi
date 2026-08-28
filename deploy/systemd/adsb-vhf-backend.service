@@ -1,0 +1,24 @@
+[Unit]
+Description=ADS-B and VHF application backend
+After=network.target readsb-adsb.service rtl-airband.service
+Wants=readsb-adsb.service
+
+[Service]
+Type=simple
+User=adsb-vhf
+Group=adsb-vhf
+SupplementaryGroups=rtl-airband
+WorkingDirectory=/opt/adsb-vhf
+EnvironmentFile=/etc/adsb-vhf/backend.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/adsb-vhf/.venv/bin/uvicorn app.main:app --host ${BACKEND_HOST} --port ${BACKEND_PORT}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=-/run/readsb
+
+[Install]
+WantedBy=multi-user.target

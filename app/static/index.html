@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111d">
+  <title>Авиационный монитор</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIINfQ3ynhYxpcMH6l7rJQvmBNLCjQ7rA2M=" crossorigin="">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">✈</span>
+        <div>
+          <h1>Авиационный монитор</h1>
+          <p id="station-name">Локальная станция</p>
+        </div>
+      </div>
+      <div class="connection" id="connection" data-state="connecting" role="status" aria-live="polite">
+        <span class="connection__dot"></span>
+        <span id="connection-text">Подключение…</span>
+      </div>
+      <div class="stats" aria-label="Статистика">
+        <div><strong id="aircraft-count">0</strong><span>бортов</span></div>
+        <div><strong id="message-rate">—</strong><span>обновлений/с</span></div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="map-panel" aria-label="Карта воздушной обстановки">
+        <div id="map"></div>
+        <div class="map-actions">
+          <button id="fit-aircraft" class="icon-button" type="button" title="Показать все борта"
+                  aria-label="Показать все борта">⌖</button>
+          <button id="toggle-tracks" class="icon-button is-active" type="button" title="Показать или скрыть треки"
+                  aria-pressed="true" aria-label="Показать или скрыть треки">⌁</button>
+        </div>
+        <div class="altitude-legend" aria-label="Легенда высоты">
+          <span>Высота</span>
+          <div class="altitude-legend__scale"></div>
+          <div class="altitude-legend__labels"><span>0</span><span>10k</span><span>25k</span><span>40k+ ft</span></div>
+        </div>
+      </section>
+
+      <aside class="sidebar">
+        <nav class="tabs" aria-label="Разделы панели">
+          <button class="tab is-active" type="button" data-tab="aircraft">Борта</button>
+          <button class="tab" type="button" data-tab="layers">Слои</button>
+          <button class="tab" type="button" data-tab="radio">Радио</button>
+        </nav>
+
+        <section class="tab-panel is-active" id="panel-aircraft">
+          <div class="panel-heading">
+            <h2>Борта поблизости</h2>
+            <span id="visible-count">0</span>
+          </div>
+          <label class="search">
+            <span class="sr-only">Поиск борта</span>
+            <input id="aircraft-search" type="search" placeholder="ICAO или позывной…" autocomplete="off">
+          </label>
+          <div id="aircraft-list" class="aircraft-list">
+            <p class="empty-state">Ожидание данных о бортах…</p>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-layers">
+          <div class="panel-heading">
+            <h2>Картографические слои</h2>
+            <button id="reload-layers" class="text-button" type="button">Обновить</button>
+          </div>
+          <div class="layer-group">
+            <h3>Подложка</h3>
+            <label class="option"><input type="radio" name="basemap" value="osm" checked><span>OpenStreetMap</span></label>
+            <label class="option" id="ofm-option" hidden><input type="radio" name="basemap" value="ofm"><span>OpenFlightMaps</span></label>
+          </div>
+          <div class="layer-group">
+            <h3>GeoJSON / KML / MBTiles</h3>
+            <div id="custom-layers"><p class="empty-state">Загрузка списка слоёв…</p></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-radio">
+          <div class="panel-heading">
+            <h2>VHF-каналы</h2>
+            <button id="reload-radio" class="text-button" type="button">Обновить</button>
+          </div>
+          <div id="radio-list" class="radio-list">
+            <p class="empty-state">Загрузка каналов…</p>
+          </div>
+          <div class="audio-player">
+            <div class="audio-player__now">
+              <span>Сейчас играет</span>
+              <strong id="now-playing">Поток не выбран</strong>
+            </div>
+            <audio id="radio-audio" controls preload="none"></audio>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <template id="aircraft-card-template">
+    <button class="aircraft-card" type="button">
+      <span class="aircraft-card__color"></span>
+      <span class="aircraft-card__identity"><strong></strong><small></small></span>
+      <span class="aircraft-card__metrics"><strong></strong><small></small></span>
+    </button>
+  </template>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>

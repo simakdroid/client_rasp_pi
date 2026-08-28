@@ -1,0 +1,28 @@
+[Unit]
+Description=RTL-Airband VHF AM receiver (RTL-SDR serial 0118)
+Documentation=https://github.com/rtl-airband/RTLSDR-Airband
+After=network-online.target
+Wants=network-online.target
+Conflicts=rtl-airband-rs.service
+
+[Service]
+Type=simple
+User=rtl-airband
+Group=rtl-airband
+SupplementaryGroups=plugdev
+EnvironmentFile=/etc/adsb-vhf/rtl-airband.env
+RuntimeDirectory=rtl-airband
+RuntimeDirectoryMode=0750
+ExecCondition=/usr/local/lib/adsb-vhf/rtl-device-mode.sh vhf-available
+ExecStartPre=/bin/sh -ec '/usr/bin/envsubst < /etc/rtl_airband.conf.in > /run/rtl-airband/rtl_airband.conf'
+ExecStart=/usr/bin/rtl_airband -F -e -c /run/rtl-airband/rtl_airband.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/rtl-airband
+
+[Install]
+WantedBy=multi-user.target

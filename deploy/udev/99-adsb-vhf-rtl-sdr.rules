@@ -1,0 +1,4 @@
+# RTL2832U devices are opened through libusb. The EEPROM serial is the stable
+# identity; a /dev symlink is intentionally not used as an application input.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{serial}=="1090", MODE="0660", GROUP="plugdev", TAG+="systemd", ENV{ADSB_VHF_ROLE}="adsb-1090", ENV{SYSTEMD_ALIAS}="/sys/subsystem/usb/adsb-1090", ENV{SYSTEMD_WANTS}+="readsb-adsb.service"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{serial}=="0118", MODE="0660", GROUP="plugdev", TAG+="systemd", ENV{ADSB_VHF_ROLE}="vhf-0118", ENV{SYSTEMD_ALIAS}="/sys/subsystem/usb/vhf-0118", ENV{SYSTEMD_WANTS}+="readsb-adsb.service rtl-airband.service"
