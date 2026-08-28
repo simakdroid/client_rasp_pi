@@ -5,8 +5,9 @@
 - ADS-B 1090 МГц — EEPROM serial `1090`;
 - авиационный VHF AM — EEPROM serial `0118`.
 
-Если подключён только один из этих RTL‑SDR, launcher автоматически отдаёт его
-`readsb`, а `rtl_airband` не запускается. При двух устройствах роли снова
+Если подключён только один RTL‑SDR, launcher открывает индекс `0` даже при
+пустом EEPROM serial, отдаёт его `readsb`, а `rtl_airband` не запускается.
+Общие udev-правила дают сервису доступ к такому донглу. При двух устройствах роли снова
 фиксируются по serial: `1090` для ADS‑B и `0118` для VHF. После горячего
 изменения состава приёмников выполните
 `sudo systemctl restart readsb-adsb rtl-airband`; при загрузке выбор выполняется
@@ -217,8 +218,20 @@ curl http://127.0.0.1:8080/api/health
 journalctl -u adsb-vhf-backend.service -n 100 --no-pager
 ```
 
-Для обновления приложения выполните новый `sudo sh ./deploy/install.sh pi`,
-проверьте env-файлы (они не перезаписываются) и перезапустите backend.
+Для обновления приложения:
+
+```bash
+cd ~/client_rasp_pi
+git pull
+sudo sh ./deploy/install.sh "$USER"
+sudo systemctl reset-failed readsb-adsb
+sudo systemctl restart readsb-adsb adsb-vhf-backend
+systemctl --user restart adsb-kiosk.service
+```
+
+Env-файлы с локальными координатами и секретами не перезаписываются. Установщик
+сам перезапускает уже активные системные сервисы; явные команды выше также
+снимают возможный `start-limit`, оставшийся после старого цикла ошибок.
 
 ## 8. Chromium kiosk на Bookworm
 

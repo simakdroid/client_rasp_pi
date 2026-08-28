@@ -65,8 +65,10 @@
     createMap();
     await Promise.allSettled([loadInitialAircraft(), loadLayers(), loadRadioChannels()]);
     connectAircraftSocket();
+    void refreshHealth();
     window.setInterval(updateRate, 1000);
     window.setInterval(loadRadioChannels, 5000);
+    window.setInterval(refreshHealth, 5000);
   }
 
   function cacheElements() {
@@ -533,6 +535,26 @@
   function updateRate() {
     el["message-rate"].textContent = String(state.updatesThisSecond);
     state.updatesThisSecond = 0;
+  }
+
+  async function refreshHealth() {
+    try {
+      const health = await fetchJson("/api/health");
+      const adsb = health.adsb || {};
+      if (adsb.status === "online") {
+        const messages = adsb.messages ?? 0;
+        setConnection("online", `ADS-B: ${messages.toLocaleString("ru-RU")} сообщений`);
+      } else {
+        const labels = {
+          unavailable: "ADS-B: readsb недоступен",
+          stale: "ADS-B: данные устарели",
+          invalid: "ADS-B: ошибка JSON",
+        };
+        setConnection("offline", labels[adsb.status] || "ADS-B недоступен");
+      }
+    } catch (_error) {
+      // WebSocket owns the connection indicator if the health endpoint is unavailable.
+    }
   }
 
   async function loadLayers() {

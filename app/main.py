@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from .adsb import AdsbSource, ReadsbJsonSource, SbsSource
 from .broadcast import BroadcastHub
 from .config import Settings, get_settings
+from .diagnostics import read_adsb_status
 from .gis import LayerManager
 from .radio import RadioMonitor
 from .tracker import AircraftTracker
@@ -78,7 +79,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health() -> dict[str, object]:
-        return {"status": "ok", "time": datetime.now(UTC).isoformat()}
+        return {
+            "status": "ok",
+            "time": datetime.now(UTC).isoformat(),
+            "adsb": await asyncio.to_thread(
+                read_adsb_status, settings.readsb_json_path
+            ),
+        }
 
     @app.get("/api/config")
     async def public_config() -> dict[str, object]:

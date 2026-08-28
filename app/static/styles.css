@@ -119,6 +119,10 @@ h1, h2, h3, p { margin: 0; }
 #map { position: absolute; inset: 0; }
 
 .leaflet-container { background: #0a1723; font-family: inherit; }
+.leaflet-container img.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
 .leaflet-control-zoom a { background: var(--panel-2); color: var(--text); border-color: var(--line); }
 .leaflet-control-attribution { background: rgba(7, 17, 29, .8) !important; color: var(--muted); }
 .leaflet-control-attribution a { color: #74c9fa; }

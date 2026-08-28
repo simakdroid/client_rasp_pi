@@ -57,10 +57,22 @@ udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb
 systemctl daemon-reload
 
-if [ -x /usr/bin/readsb ] && [ -x /usr/bin/rtl_airband ]; then
-  echo "Binaries found. Edit coordinates, frequencies and credentials, then enable services."
+# On upgrades, immediately load the new launcher, udev policy and backend code.
+for service in readsb-adsb.service rtl-airband.service adsb-vhf-backend.service; do
+  if systemctl is-active --quiet "$service"; then
+    systemctl restart "$service"
+  fi
+done
+
+if [ -x /usr/bin/readsb ]; then
+  echo "readsb found; ADS-B mode is ready to configure."
 else
-  echo "readsb and/or rtl_airband is not installed; follow docs/raspberry-pi-setup.md." >&2
+  echo "readsb is not installed; follow docs/raspberry-pi-setup.md." >&2
+fi
+if [ -x /usr/bin/rtl_airband ]; then
+  echo "Optional rtl_airband found; VHF mode can be enabled with a second dongle."
+else
+  echo "Optional rtl_airband is not installed; single-dongle ADS-B mode is unaffected."
 fi
 
 if id "$DESKTOP_USER" >/dev/null 2>&1; then

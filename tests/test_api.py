@@ -11,7 +11,10 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         radio_channels_json="[]",
     )
     with TestClient(create_app(settings)) as client:
-        assert client.get("/api/health").status_code == 200
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.json()["adsb"]["status"] == "unavailable"
         assert client.get("/api/aircraft").json()["aircraft"] == []
         assert "Авиационный монитор" in client.get("/").text
         assert client.get("/app.js").status_code == 200
+        assert client.get("/vendor/leaflet/leaflet.css").status_code == 200

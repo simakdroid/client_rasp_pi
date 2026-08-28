@@ -11,4 +11,5 @@ exec /usr/bin/chromium \
   --disable-translate \
   --password-store=basic \
   --ozone-platform-hint=auto \
+  --force-device-scale-factor=1 \
   "$URL"
