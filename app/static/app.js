@@ -29,6 +29,8 @@
     reconnectTimer: null,
     reconnectAttempt: 0,
     tracksVisible: true,
+    mapUserMoved: false,
+    autoFitting: false,
     selectedIcao: null,
     search: "",
     journalMode: "decoded",
@@ -51,6 +53,8 @@
   async function init() {
     cacheElements();
     bindUi();
+    tickClock();
+    window.setInterval(tickClock, 1000);
 
     if (!window.L) {
       setConnection("offline", "Карта недоступна: Leaflet не загружен");
@@ -82,7 +86,7 @@
 
   function cacheElements() {
     [
-      "station-name", "connection", "connection-text",
+      "station-name", "connection", "connection-text", "clock", "clock-date", "clock-time",
       "visible-count", "aircraft-search", "aircraft-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks", "reload-layers", "reload-radio",
@@ -131,6 +135,24 @@
     });
   }
 
+  function tickClock() {
+    const now = new Date();
+    const utc = { hour12: false, timeZone: "UTC" };
+    el.clock.dateTime = now.toISOString();
+    el["clock-date"].textContent = now.toLocaleDateString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    el["clock-time"].textContent = now.toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      ...utc,
+    });
+  }
+
   function configureStation() {
     const mapConfig = state.config.map || {};
     const station = state.config.station || {};
@@ -147,7 +169,7 @@
     const mapConfig = state.config.map || {};
     const center = state.station
       ? [state.station.lat, state.station.lon]
-      : (Array.isArray(mapConfig.center) ? mapConfig.center : [55.75, 37.62]);
+      : (Array.isArray(mapConfig.center) ? mapConfig.center : [57.1896, 65.3243]);
 
     state.map = L.map("map", {
       center,
@@ -155,6 +177,23 @@
       zoomControl: true,
       preferCanvas: true,
     });
+    state.map.on("dragstart", () => {
+      if (!state.autoFitting) state.mapUserMoved = true;
+    });
+    if (state.station) {
+      L.circleMarker([state.station.lat, state.station.lon], {
+        radius: 6,
+        color: "#36b7ff",
+        weight: 2,
+        fillColor: "#36b7ff",
+        fillOpacity: .35,
+        interactive: false,
+      }).addTo(state.map).bindTooltip(el["station-name"].textContent, {
+        permanent: false,
+        direction: "bottom",
+        className: "aircraft-tooltip",
+      });
+    }
 
     const osmConfig = mapConfig.osm || state.config.osm || {};
     state.basemaps.osm = L.tileLayer(
@@ -177,6 +216,7 @@
     }
 
     setBasemap(state.config.default_basemap || mapConfig.default_basemap || "osm");
+    window.setTimeout(() => state.map.invalidateSize(), 0);
   }
 
   function setBasemap(name) {
@@ -215,12 +255,18 @@
 
   function upsertAircraft(aircraft, render = true) {
     const icao = normalizeIcao(aircraft);
-    const lat = finite(aircraft.lat ?? aircraft.latitude);
-    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     if (!icao) return;
 
     const previous = state.aircraft.get(icao) || {};
+    const incomingLat = finite(aircraft.lat ?? aircraft.latitude);
+    const incomingLon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     const merged = { ...previous, ...aircraft, icao };
+    if (incomingLat === null) {
+      merged.lat = finite(previous.lat ?? previous.latitude);
+    }
+    if (incomingLon === null) {
+      merged.lon = finite(previous.lon ?? previous.lng ?? previous.longitude);
+    }
     if (Array.isArray(aircraft.track_append)) {
       const track = Array.isArray(previous.track) ? [...previous.track] : [];
       aircraft.track_append.forEach((point) => {
@@ -233,11 +279,11 @@
     }
     state.aircraft.set(icao, merged);
 
+    const lat = finite(merged.lat ?? merged.latitude);
+    const lon = finite(merged.lon ?? merged.lng ?? merged.longitude);
     if (lat !== null && lon !== null) {
       updateMarker(merged, lat, lon);
       updateTrack(merged);
-    } else {
-      removeMapObjects(icao);
     }
     if (render) finishAircraftUpdate();
   }
@@ -261,6 +307,7 @@
 
   function finishAircraftUpdate() {
     renderAircraftList();
+    revealAircraftOnMap();
   }
 
   function updateMarker(aircraft, lat, lon) {
@@ -271,27 +318,40 @@
       aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.heading,
     ) ?? 0;
     let marker = state.markers.get(icao);
+    const icon = aircraftIcon(color, rotation);
 
     if (!marker) {
       marker = L.marker([lat, lon], {
-        icon: aircraftIcon(color, rotation),
+        icon,
         zIndexOffset: Math.round(altitude || 0),
-        title: `${text(aircraft.callsign, icao)} (${icao})`,
+        riseOnHover: true,
       }).addTo(state.map);
       marker.on("click", () => selectAircraft(icao));
-      marker.bindTooltip(createTooltip(aircraft), {
-        direction: "top",
-        offset: [0, -14],
-        className: "aircraft-tooltip",
-        opacity: 1,
-      });
+      marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft));
+      marker.bindPopup(createTooltip(aircraft), { className: "aircraft-tooltip" });
       state.markers.set(icao, marker);
     } else {
       marker.setLatLng([lat, lon]);
-      marker.setIcon(aircraftIcon(color, rotation));
-      marker.setTooltipContent(createTooltip(aircraft));
+      marker.setIcon(icon);
+      marker.setTooltipContent(createDataBlock(aircraft));
+      marker.setPopupContent(createTooltip(aircraft));
       marker.setZIndexOffset(Math.round(altitude || 0));
+      marker.getTooltip()?.getElement()?.classList.toggle(
+        "is-selected",
+        icao === state.selectedIcao,
+      );
     }
+  }
+
+  function dataBlockOptions(aircraft) {
+    return {
+      permanent: true,
+      direction: "right",
+      offset: [18, 0],
+      className: `aircraft-label${aircraft.icao === state.selectedIcao ? " is-selected" : ""}`,
+      opacity: 1,
+      interactive: false,
+    };
   }
 
   function aircraftIcon(color, rotation) {
@@ -305,6 +365,45 @@
         </svg>
       </div>`,
     });
+  }
+
+  function createDataBlock(aircraft) {
+    const root = document.createElement("div");
+    const callsign = document.createElement("div");
+    callsign.className = "aircraft-label__id";
+    callsign.textContent = text(aircraft.callsign, aircraft.icao).trim();
+
+    const altitude = aircraftAltitude(aircraft);
+    const verticalRate = finite(
+      aircraft.vertical_rate_fpm ?? aircraft.baro_rate ?? aircraft.vert_rate,
+    );
+    const trend = verticalRate !== null && Math.abs(verticalRate) >= 200
+      ? (verticalRate > 0 ? " ↑" : " ↓")
+      : "";
+    const speed = aircraftSpeed(aircraft);
+    const motion = document.createElement("div");
+    motion.className = "aircraft-label__line";
+    motion.textContent = `${aircraft.on_ground ? "GND" : formatBlockAltitude(altitude)}${trend}${
+      speed === null ? "" : ` ${String(Math.round(speed)).padStart(3, "0")}`
+    }`;
+
+    root.append(callsign, motion);
+    const squawk = text(aircraft.squawk, "");
+    const third = squawk || (callsign.textContent !== aircraft.icao ? aircraft.icao : "");
+    if (third) {
+      const line = document.createElement("div");
+      line.className = "aircraft-label__line";
+      line.textContent = third;
+      root.append(line);
+    }
+    const sector = text(aircraft.sector, "").trim();
+    if (sector) {
+      const zone = document.createElement("div");
+      zone.className = "aircraft-label__zone";
+      zone.textContent = sector;
+      root.append(zone);
+    }
+    return root;
   }
 
   function createTooltip(aircraft) {
@@ -325,6 +424,9 @@
       ["Squawk", text(aircraft.squawk)],
       ["Дистанция", formatDistance(aircraftDistance(aircraft))],
     ];
+    if (text(aircraft.sector, "").trim()) {
+      rows.push(["Сектор", aircraft.sector]);
+    }
     rows.forEach(([label, value]) => {
       const labelNode = document.createElement("span");
       const valueNode = document.createElement("span");
@@ -382,18 +484,42 @@
 
   function fitAircraft() {
     const positions = [...state.markers.values()].map((marker) => marker.getLatLng());
-    if (positions.length === 1) state.map.setView(positions[0], Math.max(state.map.getZoom(), 11));
-    if (positions.length > 1) state.map.fitBounds(L.latLngBounds(positions).pad(.12), { maxZoom: 12 });
+    if (!positions.length || !state.map) return;
+    state.autoFitting = true;
+    if (positions.length === 1) {
+      state.map.setView(positions[0], Math.max(state.map.getZoom(), 9), { animate: false });
+    } else {
+      state.map.fitBounds(L.latLngBounds(positions).pad(.18), { maxZoom: 10, animate: false });
+    }
+    state.autoFitting = false;
+  }
+
+  function revealAircraftOnMap() {
+    if (!state.map || !state.markers.size || state.mapUserMoved) return;
+    const bounds = L.latLngBounds(
+      [...state.markers.values()].map((marker) => marker.getLatLng()),
+    );
+    const view = state.map.getBounds();
+    if (view.isValid() && view.pad(.02).contains(bounds)) return;
+    fitAircraft();
   }
 
   function selectAircraft(icao) {
+    const previous = state.selectedIcao;
     state.selectedIcao = icao;
+    if (previous && previous !== icao) refreshAircraftMarker(previous);
+    refreshAircraftMarker(icao);
     const marker = state.markers.get(icao);
-    if (marker) {
-      state.map.panTo(marker.getLatLng());
-      marker.openTooltip();
-    }
+    if (marker) state.map.panTo(marker.getLatLng());
     renderAircraftList();
+  }
+
+  function refreshAircraftMarker(icao) {
+    const aircraft = state.aircraft.get(icao);
+    const lat = finite(aircraft?.lat ?? aircraft?.latitude);
+    const lon = finite(aircraft?.lon ?? aircraft?.lng ?? aircraft?.longitude);
+    if (!aircraft || lat === null || lon === null) return;
+    updateMarker(aircraft, lat, lon);
   }
 
   function renderAircraftList() {
@@ -418,8 +544,13 @@
       card.querySelector(".aircraft-card__identity strong").textContent = text(aircraft.callsign, aircraft.icao);
       card.querySelector(".aircraft-card__identity small").textContent = aircraft.icao;
       card.querySelector(".aircraft-card__metrics strong").textContent = formatAltitude(aircraftAltitude(aircraft));
+      const lat = finite(aircraft.lat ?? aircraft.latitude);
+      const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
       card.querySelector(".aircraft-card__metrics small").textContent =
-        `${formatSpeed(aircraftSpeed(aircraft))} · ${formatDistance(aircraftDistance(aircraft))}`;
+        lat === null || lon === null
+          ? "нет координат"
+          : `${formatSpeed(aircraftSpeed(aircraft))} · ${formatDistance(aircraftDistance(aircraft))}`;
+      card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
       card.addEventListener("click", () => selectAircraft(aircraft.icao));
       fragment.append(card);
     });
@@ -472,6 +603,11 @@
   const formatAltitude = (value) => value === null ? "—" : `${Math.round(value).toLocaleString("ru-RU")} ft`;
   const formatSpeed = (value) => value === null ? "—" : `${Math.round(value)} kt`;
   const formatDistance = (value) => value === null ? "—" : `${value < 10 ? value.toFixed(1) : Math.round(value)} км`;
+  const formatBlockAltitude = (value) => {
+    if (value === null) return "---";
+    const hundreds = String(Math.max(0, Math.round(value / 100))).padStart(3, "0");
+    return `${value >= 5000 ? "F" : "A"}${hundreds}`;
+  };
 
   function haversineKm(lat1, lon1, lat2, lon2) {
     const rad = Math.PI / 180;
@@ -764,20 +900,30 @@
       const payload = await fetchJson(`/api/layers/${encodeURIComponent(id)}`);
       const geojson = payload.geojson || payload.data || payload;
       const layer = L.geoJSON(geojson, {
-        style: () => ({
-          color: layerInfo.color || "#ffc857",
-          weight: finite(layerInfo.weight) ?? 2,
-          opacity: finite(layerInfo.opacity) ?? .85,
-          fillOpacity: finite(layerInfo.fill_opacity) ?? .15,
-        }),
-        pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+        style: (feature) => {
+          const color = feature?.properties?.color || layerInfo.color || "#ffc857";
+          return {
+            color,
+            weight: finite(layerInfo.weight) ?? 2,
+            opacity: finite(layerInfo.opacity) ?? .85,
+            fillColor: color,
+            fillOpacity: finite(layerInfo.fill_opacity) ?? .15,
+          };
+        },
+        pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
           radius: 5,
-          color: layerInfo.color || "#ffc857",
+          color: feature?.properties?.color || layerInfo.color || "#ffc857",
           fillOpacity: .65,
         }),
         onEachFeature: (feature, featureLayer) => {
-          const title = feature?.properties?.name ?? feature?.properties?.title;
-          if (title !== undefined && title !== null) featureLayer.bindTooltip(String(title));
+          const name = feature?.properties?.name ?? feature?.properties?.title;
+          const code = feature?.properties?.code;
+          const title = code && name && String(name) !== String(code)
+            ? `${name} (${code})`
+            : (code || name);
+          if (title !== undefined && title !== null && title !== "") {
+            featureLayer.bindTooltip(String(title));
+          }
         },
       }).addTo(state.map);
       state.customLayers.set(id, layer);

@@ -79,17 +79,26 @@ WebSocket отправляет начальный `snapshot`, затем `delta`
 
 Скопируйте `.geojson`, `.json`, `.kml` или `.mbtiles` в каталог слоёв. Он
 перечитывается раз в 30 секунд. GeoJSON должен быть `FeatureCollection`.
-Полигоны по умолчанию участвуют в geofencing; свойства:
+Пользовательские сектора в git не входят: кладите их в `data/layers/` на станции
+или в `AIRMON_LAYERS_DIR` (после установки это `/opt/adsb-vhf/data/layers/`).
+Полигоны по умолчанию участвуют в geofencing; `code` попадает в формуляр борта,
+при пересечении зон берётся больший `control_priority` (УДР/ДЗ обычно 30,
+секторы РПИ — 20):
 
 ```json
 {
-  "name": "CTR",
+  "name": "Сектор 1",
+  "code": "С1",
+  "control_priority": 20,
   "geofence": true,
-  "min_alt_ft": 0,
-  "max_alt_ft": 12000,
-  "color": "#ff7800"
+  "min_alt_ft": 5000,
+  "min_alt_exclusive": true,
+  "color": "#e57373"
 }
 ```
+
+`min_alt_exclusive: true` соответствует формулировке «выше FL…»: нижняя граница
+не входит в зону, верхняя (`max_alt_ft`) входит.
 
 KML-конвертер специально ограничен Point/LineString/Polygon. Сложные KML,
 KMZ, стили и reprojection лучше заранее преобразовать через GDAL:

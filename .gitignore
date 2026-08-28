@@ -5,3 +5,7 @@ __pycache__/
 .venv/
 .env
 *.egg-info/
+
+# Local airspace volumes; keep example-sector.geojson in git.
+/data/layers/*
+!/data/layers/example-sector.geojson

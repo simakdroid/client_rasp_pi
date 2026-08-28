@@ -133,6 +133,9 @@ class AircraftTracker:
                 self._track_appends.setdefault(state.icao, []).append(state.track[-1])
                 position_added = True
 
+        if state.lat is not None and state.lon is not None:
+            changed |= self._refresh_airspace(state)
+
         if changed:
             state.revision += 1
             self._changed.add(state.icao)
@@ -169,6 +172,23 @@ class AircraftTracker:
             }
         )
 
+    def _refresh_airspace(self, state: AircraftState) -> bool:
+        assert state.lat is not None and state.lon is not None
+        changed = False
+        geofences = self.layer_manager.matching_geofences(
+            state.lon, state.lat, state.altitude_ft
+        )
+        if geofences != state.geofences:
+            state.geofences = geofences
+            changed = True
+        sector = self.layer_manager.matching_control_code(
+            state.lon, state.lat, state.altitude_ft
+        )
+        if sector != state.sector:
+            state.sector = sector
+            changed = True
+        return changed
+
     def _update_position(self, state: AircraftState, update: AircraftUpdate) -> bool:
         assert update.lat is not None and update.lon is not None
         changed = False
@@ -178,13 +198,6 @@ class AircraftTracker:
         distance_km = round(distance_m / 1000, 2)
         if state.distance_km != distance_km:
             state.distance_km = distance_km
-            changed = True
-
-        geofences = self.layer_manager.matching_geofences(
-            update.lon, update.lat, update.altitude_ft
-        )
-        if geofences != state.geofences:
-            state.geofences = geofences
             changed = True
 
         point = Position(

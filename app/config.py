@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
 
-    station_lat: float = Field(default=55.7558, ge=-90, le=90)
-    station_lon: float = Field(default=37.6173, ge=-180, le=180)
-    station_name: str = "Базовая станция"
+    station_lat: float = Field(default=57.1896, ge=-90, le=90)
+    station_lon: float = Field(default=65.3243, ge=-180, le=180)
+    station_name: str = "Тюмень/Рощино"
 
     adsb_source: Literal["json", "sbs"] = "json"
     readsb_json_path: Path = Path("/run/readsb/aircraft.json")

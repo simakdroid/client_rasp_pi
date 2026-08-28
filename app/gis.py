@@ -22,12 +22,19 @@ class Geofence:
     geometry: PreparedGeometry
     min_alt_ft: float | None = None
     max_alt_ft: float | None = None
+    min_alt_exclusive: bool = False
+    code: str | None = None
+    priority: int = 0
 
     def contains(self, lon: float, lat: float, altitude_ft: int | None) -> bool:
-        if self.min_alt_ft is not None and (
-            altitude_ft is None or altitude_ft < self.min_alt_ft
-        ):
-            return False
+        if self.min_alt_ft is not None:
+            if altitude_ft is None:
+                return False
+            if self.min_alt_exclusive:
+                if altitude_ft <= self.min_alt_ft:
+                    return False
+            elif altitude_ft < self.min_alt_ft:
+                return False
         if self.max_alt_ft is not None and (
             altitude_ft is None or altitude_ft > self.max_alt_ft
         ):
@@ -117,6 +124,17 @@ class LayerManager:
             if geofence.contains(lon, lat, altitude_ft)
         }
 
+    def matching_control_code(
+        self, lon: float, lat: float, altitude_ft: int | None
+    ) -> str | None:
+        best: Geofence | None = None
+        for geofence in self._geofences:
+            if not geofence.code or not geofence.contains(lon, lat, altitude_ft):
+                continue
+            if best is None or geofence.priority > best.priority:
+                best = geofence
+        return None if best is None else best.code
+
     def get_tile(self, layer_id: str, z: int, x: int, y_xyz: int) -> bytes | None:
         path = self._files.get(layer_id)
         if path is None or self._layers[layer_id]["kind"] != "mbtiles":
@@ -166,6 +184,7 @@ class LayerManager:
             props = feature.get("properties") or {}
             if props.get("geofence", True) is False:
                 continue
+            code = str(props["code"]).strip() if props.get("code") else None
             target.append(
                 Geofence(
                     layer_id=layer_id,
@@ -173,6 +192,9 @@ class LayerManager:
                     geometry=prep(geometry),
                     min_alt_ft=_optional_float(props.get("min_alt_ft")),
                     max_alt_ft=_optional_float(props.get("max_alt_ft")),
+                    min_alt_exclusive=bool(props.get("min_alt_exclusive", False)),
+                    code=code,
+                    priority=_optional_int(props.get("control_priority"), 20 if code else 0),
                 )
             )
 
@@ -219,3 +241,7 @@ class LayerManager:
 
 def _optional_float(value: object) -> float | None:
     return None if value in (None, "") else float(value)
+
+
+def _optional_int(value: object, default: int = 0) -> int:
+    return default if value in (None, "") else int(float(str(value)))

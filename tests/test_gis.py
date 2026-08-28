@@ -26,5 +26,78 @@ def test_geojson_geofence_with_altitude(tmp_path) -> None:
     manager.refresh()
 
     assert manager.matching_geofences(37, 55, 3000) == {"CTR"}
+    assert manager.matching_geofences(37, 55, 5000) == {"CTR"}
     assert manager.matching_geofences(37, 55, 6000) == set()
     assert manager.matching_geofences(40, 55, 3000) == set()
+
+
+def test_exclusive_min_altitude_matches_above_fl(tmp_path) -> None:
+    layer = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "name": "TMA",
+                    "min_alt_ft": 5000,
+                    "min_alt_exclusive": True,
+                    "max_alt_ft": 10000,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[36, 54], [38, 54], [38, 56], [36, 56], [36, 54]]],
+                },
+            }
+        ],
+    }
+    (tmp_path / "tma.geojson").write_text(json.dumps(layer), encoding="utf-8")
+    manager = LayerManager(tmp_path)
+    manager.refresh()
+
+    assert manager.matching_geofences(37, 55, 5000) == set()
+    assert manager.matching_geofences(37, 55, 5001) == {"TMA"}
+    assert manager.matching_geofences(37, 55, 10000) == {"TMA"}
+    assert manager.matching_geofences(37, 55, 10001) == set()
+
+
+def test_control_code_prefers_higher_priority(tmp_path) -> None:
+    layer = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "name": "Sector",
+                    "code": "С6",
+                    "control_priority": 20,
+                    "min_alt_ft": 5000,
+                    "min_alt_exclusive": True,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[36, 54], [38, 54], [38, 56], [36, 56], [36, 54]]],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "name": "TMA",
+                    "code": "USRR_APP",
+                    "control_priority": 30,
+                    "min_alt_ft": 5000,
+                    "min_alt_exclusive": True,
+                    "max_alt_ft": 26500,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[36, 54], [38, 54], [38, 56], [36, 56], [36, 54]]],
+                },
+            },
+        ],
+    }
+    (tmp_path / "overlap.geojson").write_text(json.dumps(layer), encoding="utf-8")
+    manager = LayerManager(tmp_path)
+    manager.refresh()
+
+    assert manager.matching_control_code(37, 55, 10000) == "USRR_APP"
+    assert manager.matching_control_code(37, 55, 27000) == "С6"

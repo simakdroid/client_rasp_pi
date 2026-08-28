@@ -50,6 +50,7 @@ class AircraftState:
     on_ground: bool | None = None
     distance_km: float | None = None
     geofences: set[str] = field(default_factory=set)
+    sector: str | None = None
     track: list[Position] = field(default_factory=list)
     updated_at: datetime = field(default_factory=utc_now)
     revision: int = 0
@@ -70,6 +71,7 @@ class AircraftState:
             "on_ground": self.on_ground,
             "distance_km": self.distance_km,
             "geofences": sorted(self.geofences),
+            "sector": self.sector,
             "updated_at": self.updated_at.isoformat(),
             "revision": self.revision,
         }
