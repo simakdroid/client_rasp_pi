@@ -24,7 +24,16 @@ usermod -a -G plugdev rtl-airband
 
 install -Dm0644 "$DEPLOY_DIR/udev/99-adsb-vhf-rtl-sdr.rules" /etc/udev/rules.d/99-adsb-vhf-rtl-sdr.rules
 install -Dm0644 "$DEPLOY_DIR/modprobe/blacklist-rtl-sdr.conf" /etc/modprobe.d/blacklist-rtl-sdr.conf
-install -Dm0644 "$DEPLOY_DIR/readsb/readsb.default" /etc/default/readsb-adsb
+install -d -m0755 -o root -g root /etc/adsb-vhf
+if [ ! -e /etc/adsb-vhf/rtl-airband.env ]; then
+  install -m0640 -o root -g rtl-airband "$DEPLOY_DIR/env/rtl-airband.env.example" /etc/adsb-vhf/rtl-airband.env
+fi
+if [ ! -e /etc/adsb-vhf/backend.env ]; then
+  install -m0640 -o root -g adsb-vhf "$DEPLOY_DIR/env/backend.env.example" /etc/adsb-vhf/backend.env
+fi
+if [ ! -e /etc/default/readsb-adsb ]; then
+  install -Dm0644 "$DEPLOY_DIR/readsb/readsb.default" /etc/default/readsb-adsb
+fi
 install -Dm0644 "$DEPLOY_DIR/rtl-airband/rtl_airband.conf.in" /etc/rtl_airband.conf.in
 install -Dm0644 "$DEPLOY_DIR/systemd/readsb-adsb.service" /etc/systemd/system/readsb-adsb.service
 install -Dm0644 "$DEPLOY_DIR/systemd/rtl-airband.service" /etc/systemd/system/rtl-airband.service
@@ -45,14 +54,6 @@ find /opt/adsb-vhf -type d -exec chmod 0755 {} +
 find /opt/adsb-vhf -type f -exec chmod u=rw,go=r {} +
 find /opt/adsb-vhf/.venv/bin -type f -exec chmod 0755 {} +
 install -d -m0775 -o adsb-vhf -g adsb-vhf /opt/adsb-vhf/data
-
-install -d -m0755 -o root -g root /etc/adsb-vhf
-if [ ! -e /etc/adsb-vhf/rtl-airband.env ]; then
-  install -m0640 -o root -g rtl-airband "$DEPLOY_DIR/env/rtl-airband.env.example" /etc/adsb-vhf/rtl-airband.env
-fi
-if [ ! -e /etc/adsb-vhf/backend.env ]; then
-  install -m0640 -o root -g adsb-vhf "$DEPLOY_DIR/env/backend.env.example" /etc/adsb-vhf/backend.env
-fi
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb
