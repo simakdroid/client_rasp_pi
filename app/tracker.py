@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,6 +23,7 @@ class AircraftTracker:
         max_track_points: int,
         min_track_distance_m: float,
         max_events: int = 500,
+        max_archive: int = 100,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
@@ -30,9 +31,12 @@ class AircraftTracker:
         self.ttl = timedelta(seconds=ttl_s)
         self.max_track_points = max_track_points
         self.min_track_distance_m = min_track_distance_m
+        self.max_archive = max_archive
         self._aircraft: dict[str, AircraftState] = {}
+        self._archive: OrderedDict[str, AircraftState] = OrderedDict()
         self._changed: set[str] = set()
         self._removed: set[str] = set()
+        self._archive_evicted: set[str] = set()
         self._track_appends: dict[str, list[Position]] = {}
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._event_sequence = 0
@@ -45,6 +49,7 @@ class AircraftTracker:
 
     async def prune(self) -> None:
         threshold = datetime.now(UTC) - self.ttl
+        now = datetime.now(UTC)
         async with self._lock:
             expired = [
                 icao for icao, state in self._aircraft.items() if state.updated_at < threshold
@@ -54,7 +59,8 @@ class AircraftTracker:
                 self._changed.discard(icao)
                 self._track_appends.pop(icao, None)
                 self._removed.add(icao)
-                self._append_event(state, "lost", datetime.now(UTC))
+                self._append_event(state, "lost", now)
+                self._store_archive(state, now)
 
     async def snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:
@@ -63,15 +69,30 @@ class AircraftTracker:
                 for state in self._aircraft.values()
             ]
 
+    async def archived_snapshot(self) -> list[dict[str, Any]]:
+        async with self._lock:
+            return [
+                state.public_dict(include_track=False)
+                for state in reversed(self._archive.values())
+            ]
+
     async def recent_events(
-        self, after_id: int = 0, limit: int = 100
+        self,
+        after_id: int = 0,
+        before_id: int = 0,
+        limit: int = 100,
+        newest_first: bool = False,
     ) -> dict[str, Any]:
         async with self._lock:
-            events = [event for event in self._events if event["id"] > after_id]
-            return {
-                "events": events[-limit:],
-                "last_id": self._event_sequence,
-            }
+            return _page_log(
+                list(self._events),
+                after_id=after_id,
+                before_id=before_id,
+                limit=limit,
+                last_id=self._event_sequence,
+                items_key="events",
+                newest_first=newest_first,
+            )
 
     async def consume_delta(self) -> dict[str, Any] | None:
         async with self._lock:
@@ -88,22 +109,51 @@ class AircraftTracker:
                         for point in points
                     ]
                 changed.append(item)
+            archived = [
+                self._archive[icao].public_dict(include_track=False)
+                for icao in self._removed
+                if icao in self._archive
+            ]
             result = {
                 "type": "delta",
                 "timestamp": datetime.now(UTC).isoformat(),
                 "upsert": changed,
                 "remove": sorted(self._removed),
+                "archive": archived,
+                "archive_remove": sorted(self._archive_evicted),
             }
             self._changed.clear()
             self._removed.clear()
+            self._archive_evicted.clear()
             self._track_appends.clear()
             return result
+
+    def _store_archive(self, state: AircraftState, lost_at: datetime) -> None:
+        if self.max_archive <= 0:
+            return
+        state.lost_at = lost_at
+        self._archive.pop(state.icao, None)
+        self._archive[state.icao] = state
+        self._archive_evicted.discard(state.icao)
+        while len(self._archive) > self.max_archive:
+            evicted_id, _ = self._archive.popitem(last=False)
+            self._archive_evicted.add(evicted_id)
+
+    def _restore_archive(self, icao: str) -> AircraftState | None:
+        state = self._archive.pop(icao, None)
+        if state is None:
+            return None
+        state.lost_at = None
+        self._archive_evicted.discard(icao)
+        return state
 
     def _merge(self, update: AircraftUpdate) -> None:
         state = self._aircraft.get(update.icao)
         is_new = state is None
         if is_new:
-            state = AircraftState(icao=update.icao, updated_at=update.received_at)
+            state = self._restore_archive(update.icao) or AircraftState(
+                icao=update.icao, updated_at=update.received_at
+            )
             self._aircraft[update.icao] = state
 
         changed = is_new
@@ -255,3 +305,35 @@ def _event_text(state: AircraftState, kind: str) -> str:
         details.append(f"SQ {state.squawk}")
     suffix = f" · {' · '.join(details)}" if details else ""
     return f"{prefix}: {identity}{suffix}"
+
+
+def _page_log(
+    records: list[dict[str, Any]],
+    *,
+    after_id: int,
+    before_id: int,
+    limit: int,
+    last_id: int,
+    items_key: str,
+    newest_first: bool,
+) -> dict[str, Any]:
+    filtered = [item for item in records if item["id"] > after_id]
+    if newest_first:
+        window = (
+            filtered if before_id <= 0 else [item for item in filtered if item["id"] < before_id]
+        )
+        page = list(reversed(window))[:limit]
+        oldest = page[-1]["id"] if page else 0
+        has_more = any(item["id"] < oldest for item in filtered) if oldest else bool(filtered)
+        return {
+            items_key: page,
+            "last_id": last_id,
+            "total": len(filtered),
+            "has_more": has_more,
+        }
+    return {
+        items_key: filtered[-limit:],
+        "last_id": last_id,
+        "total": len(filtered),
+        "has_more": len(filtered) > limit,
+    }

@@ -263,7 +263,44 @@ h1, h2, h3, p { margin: 0; }
   font-size: 10px;
   line-height: 1.45;
 }
-.journal-list { display: grid; align-content: start; gap: 6px; }
+.journal-list {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  overflow: auto;
+}
+.journal-pager {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.journal-pager button {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+}
+.journal-pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.journal-pager button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: .55;
+}
+.journal-pager span {
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 .journal-entry {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -279,6 +316,7 @@ h1, h2, h3, p { margin: 0; }
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-size: 10px;
+  white-space: nowrap;
 }
 .journal-entry strong {
   overflow: hidden;
@@ -354,6 +392,13 @@ h1, h2, h3, p { margin: 0; }
 }
 .aircraft-card__flight small { color: var(--muted); font-size: 10px; letter-spacing: .04em; }
 .aircraft-card__metrics { color: var(--muted); font-size: 11px; }
+.aircraft-card__squawk {
+  color: #9ee0ff;
+  font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.aircraft-card__squawk:empty { display: none; }
 .aircraft-card__zones {
   overflow: hidden;
   color: var(--warning);
@@ -362,6 +407,14 @@ h1, h2, h3, p { margin: 0; }
   white-space: nowrap;
 }
 .aircraft-card__zones:empty { display: none; }
+.aircraft-card.is-archived { opacity: .78; }
+.aircraft-card__lost { color: var(--muted); font-size: 10px; }
+
+.archive-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
 
 .layer-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .layer-group h3 { margin-bottom: 8px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
@@ -406,6 +459,7 @@ h1, h2, h3, p { margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .aircraft-marker { background: transparent; border: 0; }
+.aircraft-marker.is-archived { opacity: .42; filter: grayscale(.35); }
 .aircraft-marker__plane {
   width: 30px;
   height: 30px;
@@ -431,9 +485,9 @@ h1, h2, h3, p { margin: 0; }
   white-space: nowrap;
 }
 .leaflet-tooltip.aircraft-label::before { display: none; }
-.leaflet-tooltip.aircraft-label.is-selected {
-  border-color: var(--accent);
-  background: rgba(12, 41, 64, .96);
+.leaflet-tooltip.aircraft-label.is-archived {
+  opacity: .7;
+  filter: grayscale(.2);
 }
 .aircraft-label__id { color: #fff; font-weight: 700; letter-spacing: .02em; }
 .aircraft-label__line { color: #d5e6f4; }

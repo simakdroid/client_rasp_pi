@@ -53,6 +53,7 @@ class AircraftState:
     sector: str | None = None
     track: list[Position] = field(default_factory=list)
     updated_at: datetime = field(default_factory=utc_now)
+    lost_at: datetime | None = None
     revision: int = 0
 
     def public_dict(self, include_track: bool = True) -> dict[str, Any]:
@@ -73,6 +74,8 @@ class AircraftState:
             "geofences": sorted(self.geofences),
             "sector": self.sector,
             "updated_at": self.updated_at.isoformat(),
+            "lost_at": self.lost_at.isoformat() if self.lost_at else None,
+            "status": "archived" if self.lost_at else "live",
             "revision": self.revision,
         }
         if include_track:

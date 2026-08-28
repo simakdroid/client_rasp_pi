@@ -35,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.track_max_points,
         settings.track_min_distance_m,
         settings.event_log_size,
+        settings.archive_max_aircraft,
     )
     hub = BroadcastHub()
     raw_messages = RawMessageLog(settings.raw_log_size)
@@ -124,21 +125,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "type": "snapshot",
             "timestamp": datetime.now(UTC).isoformat(),
             "aircraft": await tracker.snapshot(),
+            "archived": await tracker.archived_snapshot(),
         }
 
     @app.get("/api/adsb/messages")
     async def adsb_messages(
         after_id: int = Query(default=0, ge=0),
+        before_id: int = Query(default=0, ge=0),
         limit: int = Query(default=100, ge=1, le=500),
+        newest_first: bool = Query(default=False),
     ) -> dict[str, object]:
-        return await tracker.recent_events(after_id=after_id, limit=limit)
+        return await tracker.recent_events(
+            after_id=after_id,
+            before_id=before_id,
+            limit=limit,
+            newest_first=newest_first,
+        )
 
     @app.get("/api/adsb/raw")
     async def adsb_raw_messages(
         after_id: int = Query(default=0, ge=0),
+        before_id: int = Query(default=0, ge=0),
         limit: int = Query(default=100, ge=1, le=500),
+        newest_first: bool = Query(default=False),
     ) -> dict[str, object]:
-        return await raw_messages.recent(after_id=after_id, limit=limit)
+        return await raw_messages.recent(
+            after_id=after_id,
+            before_id=before_id,
+            limit=limit,
+            newest_first=newest_first,
+        )
 
     @app.get("/api/layers")
     async def layer_list() -> list[dict[str, object]]:
@@ -189,6 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "type": "snapshot",
                     "timestamp": datetime.now(UTC).isoformat(),
                     "aircraft": await tracker.snapshot(),
+                    "archived": await tracker.archived_snapshot(),
                 }
             )
             while True:

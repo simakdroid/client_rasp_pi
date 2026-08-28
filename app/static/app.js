@@ -3,16 +3,17 @@
 
   /*
    * Ожидаемый протокол /ws/aircraft:
-   *   {"type":"snapshot","aircraft":[Aircraft, ...]} — полное состояние;
+   *   {"type":"snapshot","aircraft":[Aircraft, ...],"archived":[Aircraft, ...]};
    *   {"type":"upsert","aircraft":Aircraft}          — новый/изменённый борт;
    *   {"type":"remove","icao":"ABC123"}              — удалить борт.
    * Для совместимости snapshot может быть массивом, а delta — объектом
-   * {"type":"delta","upsert":[...], "remove":["ABC123", ...]}. Элемент upsert
-   * может содержать track_append с новыми точками вместо полной истории.
-   * Aircraft обязан содержать
-   * icao (или hex), lat, lon; остальные используемые поля необязательны:
-   * callsign, altitude/alt_baro, speed/ground_speed, squawk, track/heading,
-   * distance, trail/positions (массив точек [lat, lon] или {lat, lon}).
+   * {"type":"delta","upsert":[...], "remove":["ABC123", ...],
+   *  "archive":[Aircraft, ...], "archive_remove":["ABC123", ...]}.
+   * Элемент upsert может содержать track_append с новыми точками вместо полной
+   * истории. Aircraft обязан содержать icao (или hex), lat, lon; остальные
+   * используемые поля необязательны: callsign, altitude/alt_baro,
+   * speed/ground_speed, squawk, track/heading, distance, trail/positions
+   * (массив точек [lat, lon] или {lat, lon}), lost_at для архива.
    */
 
   const state = {
@@ -22,7 +23,9 @@
     basemaps: {},
     activeBasemap: null,
     aircraft: new Map(),
+    archived: new Map(),
     markers: new Map(),
+    archiveMarkers: new Map(),
     tracks: new Map(),
     customLayers: new Map(),
     socket: null,
@@ -34,6 +37,11 @@
     selectedIcao: null,
     search: "",
     journalMode: "decoded",
+    journalPageSize: 25,
+    journalCursors: { decoded: [0], raw: [0] },
+    journalClearedAfter: { decoded: 0, raw: 0 },
+    journalTotal: { decoded: 0, raw: 0 },
+    journalHasMore: { decoded: false, raw: false },
     journalEvents: [],
     lastEventId: 0,
     rawMessages: [],
@@ -88,9 +96,11 @@
     [
       "station-name", "connection", "connection-text", "clock", "clock-date", "clock-time",
       "visible-count", "aircraft-search", "aircraft-list",
+      "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks", "reload-layers", "reload-radio",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
+      "journal-pager", "journal-range", "journal-newer", "journal-older",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -109,11 +119,9 @@
     el["toggle-tracks"].addEventListener("click", toggleTracks);
     el["reload-layers"].addEventListener("click", loadLayers);
     el["reload-radio"].addEventListener("click", loadRadioChannels);
-    el["clear-journal"].addEventListener("click", () => {
-      if (state.journalMode === "raw") state.rawMessages = [];
-      else state.journalEvents = [];
-      renderJournal();
-    });
+    el["clear-journal"].addEventListener("click", clearJournal);
+    el["journal-newer"].addEventListener("click", () => pageJournal("newer"));
+    el["journal-older"].addEventListener("click", () => pageJournal("older"));
     document.querySelectorAll("[data-journal-mode]").forEach((button) => {
       button.addEventListener("click", () => {
         state.journalMode = button.dataset.journalMode;
@@ -137,7 +145,6 @@
 
   function tickClock() {
     const now = new Date();
-    const utc = { hour12: false, timeZone: "UTC" };
     el.clock.dateTime = now.toISOString();
     el["clock-date"].textContent = now.toLocaleDateString("ru-RU", {
       day: "2-digit",
@@ -145,12 +152,7 @@
       year: "numeric",
       timeZone: "UTC",
     });
-    el["clock-time"].textContent = now.toLocaleTimeString("ru-RU", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      ...utc,
-    });
+    el["clock-time"].textContent = formatUtcTime(now);
   }
 
   function configureStation() {
@@ -232,14 +234,14 @@
     try {
       const payload = await fetchJson("/api/aircraft");
       const aircraft = Array.isArray(payload) ? payload : (payload.aircraft || []);
-      replaceAircraft(aircraft);
+      replaceAircraft(aircraft, payload.archived || []);
     } catch (error) {
       console.error("Ошибка начальной загрузки бортов:", error);
       setConnection("offline", "Начальные данные недоступны");
     }
   }
 
-  function replaceAircraft(items) {
+  function replaceAircraft(items, archived = []) {
     const incoming = new Set();
     items.forEach((aircraft) => {
       const icao = normalizeIcao(aircraft);
@@ -250,14 +252,29 @@
     [...state.aircraft.keys()].forEach((icao) => {
       if (!incoming.has(icao)) removeAircraft(icao, false);
     });
+    replaceArchive(Array.isArray(archived) ? archived : []);
     finishAircraftUpdate();
+  }
+
+  function replaceArchive(items) {
+    const incoming = new Set();
+    items.forEach((aircraft) => {
+      const icao = normalizeIcao(aircraft);
+      if (!icao || state.aircraft.has(icao)) return;
+      incoming.add(icao);
+      archiveAircraft(aircraft, false);
+    });
+    [...state.archived.keys()].forEach((icao) => {
+      if (!incoming.has(icao)) dropArchive(icao, false);
+    });
   }
 
   function upsertAircraft(aircraft, render = true) {
     const icao = normalizeIcao(aircraft);
     if (!icao) return;
 
-    const previous = state.aircraft.get(icao) || {};
+    const previous = state.aircraft.get(icao) || state.archived.get(icao) || {};
+    dropArchive(icao, false);
     const incomingLat = finite(aircraft.lat ?? aircraft.latitude);
     const incomingLon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     const merged = { ...previous, ...aircraft, icao };
@@ -293,6 +310,27 @@
     state.aircraft.delete(icao);
     removeMapObjects(icao);
     if (state.selectedIcao === icao) state.selectedIcao = null;
+    dropArchive(icao, false);
+    if (render) finishAircraftUpdate();
+  }
+
+  function archiveAircraft(aircraft, render = true) {
+    const icao = normalizeIcao(aircraft);
+    if (!icao) return;
+    state.aircraft.delete(icao);
+    removeMapObjects(icao);
+    const merged = { ...(state.archived.get(icao) || {}), ...aircraft, icao, status: "archived" };
+    state.archived.set(icao, merged);
+    updateArchiveMarker(merged);
+    if (render) finishAircraftUpdate();
+  }
+
+  function dropArchive(icaoValue, render = true) {
+    const icao = text(icaoValue, "").toUpperCase();
+    state.archived.delete(icao);
+    const marker = state.archiveMarkers.get(icao);
+    if (marker) state.map.removeLayer(marker);
+    state.archiveMarkers.delete(icao);
     if (render) finishAircraftUpdate();
   }
 
@@ -343,20 +381,56 @@
     }
   }
 
-  function dataBlockOptions(aircraft) {
+  function updateArchiveMarker(aircraft) {
+    const icao = aircraft.icao;
+    const lat = finite(aircraft.lat ?? aircraft.latitude);
+    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const existing = state.archiveMarkers.get(icao);
+    if (lat === null || lon === null) {
+      if (existing) state.map.removeLayer(existing);
+      state.archiveMarkers.delete(icao);
+      return;
+    }
+    const altitude = aircraftAltitude(aircraft);
+    const rotation = finite(
+      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.heading,
+    ) ?? 0;
+    const icon = aircraftIcon(altitudeColor(altitude), rotation, true);
+    if (!existing) {
+      const marker = L.marker([lat, lon], {
+        icon,
+        zIndexOffset: Math.round((altitude || 0) / 4) - 200,
+        riseOnHover: true,
+        opacity: .7,
+      }).addTo(state.map);
+      marker.on("click", () => selectAircraft(icao));
+      marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft, true));
+      marker.bindPopup(createTooltip(aircraft), { className: "aircraft-tooltip" });
+      state.archiveMarkers.set(icao, marker);
+      return;
+    }
+    existing.setLatLng([lat, lon]);
+    existing.setIcon(icon);
+    existing.setTooltipContent(createDataBlock(aircraft));
+    existing.setPopupContent(createTooltip(aircraft));
+  }
+
+  function dataBlockOptions(aircraft, archived = false) {
     return {
       permanent: true,
       direction: "right",
       offset: [18, 0],
-      className: `aircraft-label${aircraft.icao === state.selectedIcao ? " is-selected" : ""}`,
+      className: `aircraft-label${aircraft.icao === state.selectedIcao ? " is-selected" : ""}${
+        archived ? " is-archived" : ""
+      }`,
       opacity: 1,
       interactive: false,
     };
   }
 
-  function aircraftIcon(color, rotation) {
+  function aircraftIcon(color, rotation, archived = false) {
     return L.divIcon({
-      className: "aircraft-marker",
+      className: `aircraft-marker${archived ? " is-archived" : ""}`,
       iconSize: [30, 30],
       iconAnchor: [15, 15],
       html: `<div class="aircraft-marker__plane" style="--rotation:${rotation}deg;color:${color}">
@@ -427,6 +501,9 @@
     ];
     if (text(aircraft.sector, "").trim()) {
       rows.push(["Сектор", aircraft.sector]);
+    }
+    if (aircraft.lost_at) {
+      rows.push(["Статус", formatLostAt(aircraft.lost_at)]);
     }
     rows.forEach(([label, value]) => {
       const labelNode = document.createElement("span");
@@ -510,26 +587,63 @@
     state.selectedIcao = icao;
     if (previous && previous !== icao) refreshAircraftMarker(previous);
     refreshAircraftMarker(icao);
-    const marker = state.markers.get(icao);
+    const marker = state.markers.get(icao) || state.archiveMarkers.get(icao);
     if (marker) state.map.panTo(marker.getLatLng());
     renderAircraftList();
   }
 
   function refreshAircraftMarker(icao) {
-    const aircraft = state.aircraft.get(icao);
-    const lat = finite(aircraft?.lat ?? aircraft?.latitude);
-    const lon = finite(aircraft?.lon ?? aircraft?.lng ?? aircraft?.longitude);
-    if (!aircraft || lat === null || lon === null) return;
-    updateMarker(aircraft, lat, lon);
+    const live = state.aircraft.get(icao);
+    if (live) {
+      const lat = finite(live.lat ?? live.latitude);
+      const lon = finite(live.lon ?? live.lng ?? live.longitude);
+      if (lat !== null && lon !== null) updateMarker(live, lat, lon);
+      return;
+    }
+    const archived = state.archived.get(icao);
+    if (archived) updateArchiveMarker(archived);
+  }
+
+  function matchesSearch(aircraft) {
+    const haystack = `${aircraft.icao} ${text(aircraft.callsign, "")} ${text(aircraft.squawk, "")}`.toUpperCase();
+    return !state.search || haystack.includes(state.search);
+  }
+
+  function fillAircraftCard(aircraft, archived = false) {
+    const card = byId("aircraft-card-template").content.firstElementChild.cloneNode(true);
+    card.dataset.icao = aircraft.icao;
+    card.classList.toggle("is-selected", state.selectedIcao === aircraft.icao);
+    card.classList.toggle("is-archived", archived);
+    card.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
+    card.querySelector(".aircraft-card__flight strong").textContent = text(
+      aircraft.callsign, "без позывного",
+    );
+    card.querySelector(".aircraft-card__flight small").textContent = aircraft.icao;
+    const lat = finite(aircraft.lat ?? aircraft.latitude);
+    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const bits = [
+      formatAltitude(aircraftAltitude(aircraft)),
+      formatSpeed(aircraftSpeed(aircraft)),
+    ];
+    bits.push(lat === null || lon === null ? "нет координат" : formatDistance(aircraftDistance(aircraft)));
+    card.querySelector(".aircraft-card__metrics").textContent = bits.join(" · ");
+    const squawk = text(aircraft.squawk, "").trim();
+    card.querySelector(".aircraft-card__squawk").textContent = squawk ? `SQ ${squawk}` : "";
+    card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
+    if (archived) {
+      const lost = document.createElement("span");
+      lost.className = "aircraft-card__lost";
+      lost.textContent = formatLostAt(aircraft.lost_at);
+      card.querySelector(".aircraft-card__body").append(lost);
+    }
+    card.addEventListener("click", () => selectAircraft(aircraft.icao));
+    return card;
   }
 
   function renderAircraftList() {
     const fragment = document.createDocumentFragment();
     const items = [...state.aircraft.values()]
-      .filter((aircraft) => {
-        const haystack = `${aircraft.icao} ${text(aircraft.callsign, "")}`.toUpperCase();
-        return !state.search || haystack.includes(state.search);
-      })
+      .filter(matchesSearch)
       .sort((a, b) => {
         const da = aircraftDistance(a);
         const db = aircraftDistance(b);
@@ -537,32 +651,31 @@
           text(a.callsign, a.icao).localeCompare(text(b.callsign, b.icao));
       });
 
-    items.forEach((aircraft) => {
-      const card = byId("aircraft-card-template").content.firstElementChild.cloneNode(true);
-      card.dataset.icao = aircraft.icao;
-      card.classList.toggle("is-selected", state.selectedIcao === aircraft.icao);
-      card.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
-      card.querySelector(".aircraft-card__flight strong").textContent = text(
-        aircraft.callsign, "без позывного",
-      );
-      card.querySelector(".aircraft-card__flight small").textContent = aircraft.icao;
-      const lat = finite(aircraft.lat ?? aircraft.latitude);
-      const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-      const bits = [
-        formatAltitude(aircraftAltitude(aircraft)),
-        formatSpeed(aircraftSpeed(aircraft)),
-      ];
-      bits.push(lat === null || lon === null ? "нет координат" : formatDistance(aircraftDistance(aircraft)));
-      card.querySelector(".aircraft-card__metrics").textContent = bits.join(" · ");
-      card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
-      card.addEventListener("click", () => selectAircraft(aircraft.icao));
-      fragment.append(card);
-    });
-
+    items.forEach((aircraft) => fragment.append(fillAircraftCard(aircraft)));
     el["aircraft-list"].replaceChildren(
       fragment.childNodes.length ? fragment : emptyNode(state.search ? "Ничего не найдено" : "Нет активных бортов"),
     );
     el["visible-count"].textContent = String(items.length);
+    renderArchiveList();
+  }
+
+  function renderArchiveList() {
+    const items = [...state.archived.values()]
+      .filter(matchesSearch)
+      .sort((a, b) => text(b.lost_at, "").localeCompare(text(a.lost_at, "")));
+    el["archive-section"].hidden = items.length === 0 && !state.search;
+    if (!items.length) {
+      el["archive-list"].replaceChildren(
+        emptyNode(state.search && state.archived.size ? "Ничего не найдено в архиве" : "Архив пуст"),
+      );
+      el["archive-count"].textContent = "0";
+      if (!state.archived.size) el["archive-section"].hidden = true;
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    items.forEach((aircraft) => fragment.append(fillAircraftCard(aircraft, true)));
+    el["archive-list"].replaceChildren(fragment);
+    el["archive-count"].textContent = String(items.length);
   }
 
   function aircraftAltitude(aircraft) {
@@ -607,6 +720,21 @@
   const formatAltitude = (value) => value === null ? "—" : `${Math.round(value).toLocaleString("ru-RU")} ft`;
   const formatSpeed = (value) => value === null ? "—" : `${Math.round(value)} kt`;
   const formatDistance = (value) => value === null ? "—" : `${value < 10 ? value.toFixed(1) : Math.round(value)} км`;
+  const formatUtcTime = (value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return "—";
+    return date.toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    });
+  };
+  const formatLostAt = (value) => {
+    const time = formatUtcTime(value);
+    return time === "—" ? "пропал" : `пропал ${time} UTC`;
+  };
   const formatBlockAltitude = (value) => {
     if (value === null) return "---";
     const hundreds = String(Math.max(0, Math.round(value / 100))).padStart(3, "0");
@@ -657,7 +785,7 @@
       return;
     }
     if (message.type === "snapshot") {
-      replaceAircraft(message.aircraft || []);
+      replaceAircraft(message.aircraft || [], message.archived || []);
       return;
     }
     if (message.type === "resync") {
@@ -672,9 +800,18 @@
       removeAircraft(message.icao ?? message.hex);
       return;
     }
-    if (Array.isArray(message.upsert) || Array.isArray(message.remove)) {
+    if (Array.isArray(message.upsert) || Array.isArray(message.remove) || Array.isArray(message.archive)) {
       (message.upsert || []).forEach((aircraft) => upsertAircraft(aircraft, false));
-      (message.remove || []).forEach((icao) => removeAircraft(icao, false));
+      const archivedIcaos = new Set(
+        (message.archive || []).map((aircraft) => normalizeIcao(aircraft)).filter(Boolean),
+      );
+      (message.archive_remove || []).forEach((icao) => dropArchive(icao, false));
+      (message.archive || []).forEach((aircraft) => archiveAircraft(aircraft, false));
+      (message.remove || []).forEach((icao) => {
+        if (!archivedIcaos.has(text(icao, "").toUpperCase())) {
+          removeAircraft(icao, false);
+        }
+      });
       finishAircraftUpdate();
     }
   }
@@ -719,28 +856,72 @@
     else await loadDecodedMessages();
   }
 
+  function journalQuery(mode) {
+    const cursors = state.journalCursors[mode];
+    const beforeId = cursors[cursors.length - 1] || 0;
+    const afterId = state.journalClearedAfter[mode];
+    return `after_id=${afterId}&before_id=${beforeId}&limit=${state.journalPageSize}&newest_first=true`;
+  }
+
+  function applyJournalPage(mode, items, payload) {
+    const lastId = finite(payload.last_id) ?? 0;
+    if (mode === "raw") {
+      state.rawMessages = items;
+      state.lastRawId = lastId;
+    } else {
+      state.journalEvents = items;
+      state.lastEventId = lastId;
+    }
+    state.journalTotal[mode] = finite(payload.total) ?? items.length;
+    state.journalHasMore[mode] = Boolean(payload.has_more);
+    if (!items.length && state.journalCursors[mode].length > 1) {
+      state.journalCursors[mode].pop();
+      void loadJournal();
+      return;
+    }
+    renderJournal();
+  }
+
+  function clearJournal() {
+    const mode = state.journalMode;
+    const lastId = mode === "raw" ? state.lastRawId : state.lastEventId;
+    state.journalClearedAfter[mode] = lastId;
+    state.journalCursors[mode] = [0];
+    if (mode === "raw") state.rawMessages = [];
+    else state.journalEvents = [];
+    state.journalTotal[mode] = 0;
+    state.journalHasMore[mode] = false;
+    renderJournal();
+    void loadJournal();
+  }
+
+  function pageJournal(direction) {
+    const mode = state.journalMode;
+    const cursors = state.journalCursors[mode];
+    if (direction === "newer") {
+      if (cursors.length <= 1) return;
+      cursors.pop();
+    } else {
+      const items = mode === "raw" ? state.rawMessages : state.journalEvents;
+      if (!items.length || !state.journalHasMore[mode]) return;
+      const oldest = Math.min(...items.map((item) => finite(item.id) ?? Infinity));
+      if (!Number.isFinite(oldest)) return;
+      cursors.push(oldest);
+    }
+    void loadJournal();
+  }
+
   async function loadDecodedMessages() {
     try {
-      const payload = await fetchJson(
-        `/api/adsb/messages?after_id=${state.lastEventId}&limit=100`,
-      );
+      const payload = await fetchJson(`/api/adsb/messages?${journalQuery("decoded")}`);
       const events = Array.isArray(payload.events) ? payload.events : [];
-      state.lastEventId = Math.max(
-        state.lastEventId,
-        finite(payload.last_id) ?? 0,
-        ...events.map((event) => finite(event.id) ?? 0),
-      );
-      if (events.length) {
-        const knownIds = new Set(state.journalEvents.map((event) => event.id));
-        state.journalEvents.push(...events.filter((event) => !knownIds.has(event.id)));
-        state.journalEvents = state.journalEvents.slice(-200);
-        renderJournal();
-      }
+      applyJournalPage("decoded", events, payload);
     } catch (error) {
       if (!state.journalEvents.length) {
         el["journal-list"].replaceChildren(
           emptyNode("Журнал ADS-B недоступен", true),
         );
+        el["journal-pager"].hidden = true;
       }
       console.warn("Ошибка загрузки журнала ADS-B:", error);
     }
@@ -748,28 +929,15 @@
 
   async function loadRawMessages() {
     try {
-      const payload = await fetchJson(
-        `/api/adsb/raw?after_id=${state.lastRawId}&limit=100`,
-      );
+      const payload = await fetchJson(`/api/adsb/raw?${journalQuery("raw")}`);
       const messages = Array.isArray(payload.messages) ? payload.messages : [];
-      state.lastRawId = Math.max(
-        state.lastRawId,
-        finite(payload.last_id) ?? 0,
-        ...messages.map((message) => finite(message.id) ?? 0),
-      );
-      if (messages.length) {
-        const knownIds = new Set(state.rawMessages.map((message) => message.id));
-        state.rawMessages.push(
-          ...messages.filter((message) => !knownIds.has(message.id)),
-        );
-        state.rawMessages = state.rawMessages.slice(-300);
-        renderJournal();
-      }
+      applyJournalPage("raw", messages, payload);
     } catch (error) {
       if (!state.rawMessages.length) {
         el["journal-list"].replaceChildren(
           emptyNode("Поток сырых ADS-B сообщений недоступен", true),
         );
+        el["journal-pager"].hidden = true;
       }
       console.warn("Ошибка загрузки сырых ADS-B сообщений:", error);
     }
@@ -777,11 +945,20 @@
 
   function renderJournal() {
     const rawMode = state.journalMode === "raw";
+    const mode = rawMode ? "raw" : "decoded";
     const items = rawMode ? state.rawMessages : state.journalEvents;
-    el["journal-count"].textContent = String(items.length);
+    const total = state.journalTotal[mode];
+    el["journal-count"].textContent = String(total);
     el["journal-hint"].textContent = rawMode
-      ? "AVR/Mode-S пакеты напрямую с TCP-порта readsb 30002."
-      : "Изменения декодированных данных бортов.";
+      ? "AVR/Mode-S пакеты напрямую с TCP-порта readsb 30002. Время записей — UTC."
+      : "Изменения декодированных данных бортов. Время записей — UTC.";
+    const onFirstPage = state.journalCursors[mode].length <= 1;
+    el["journal-newer"].disabled = onFirstPage;
+    el["journal-older"].disabled = !state.journalHasMore[mode] || !items.length;
+    el["journal-range"].textContent = items.length
+      ? `${items.length} из ${total}`
+      : `0 из ${total}`;
+    el["journal-pager"].hidden = total <= state.journalPageSize && onFirstPage;
     if (!items.length) {
       el["journal-list"].replaceChildren(
         emptyNode(
@@ -793,14 +970,14 @@
       return;
     }
     const fragment = document.createDocumentFragment();
-    [...items].reverse().forEach((event) => {
+    items.forEach((event) => {
       const entry = document.createElement("article");
       entry.className = "journal-entry";
       const timestamp = document.createElement("time");
       const date = new Date(event.timestamp);
-      timestamp.textContent = Number.isNaN(date.getTime())
-        ? "—"
-        : date.toLocaleTimeString("ru-RU");
+      const valid = !Number.isNaN(date.getTime());
+      if (valid) timestamp.dateTime = date.toISOString();
+      timestamp.textContent = valid ? `${formatUtcTime(date)} UTC` : "—";
 
       if (rawMode) {
         entry.classList.add("is-raw");

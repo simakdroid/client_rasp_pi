@@ -65,6 +65,13 @@
           <div id="aircraft-list" class="aircraft-list">
             <p class="empty-state">Ожидание данных о бортах…</p>
           </div>
+          <section id="archive-section" class="archive-section" hidden>
+            <div class="panel-heading">
+              <h2>Архив</h2>
+              <span id="archive-count">0</span>
+            </div>
+            <div id="archive-list" class="aircraft-list"></div>
+          </section>
         </section>
 
         <section class="tab-panel" id="panel-journal">
@@ -79,10 +86,15 @@
             <button class="is-active" type="button" data-journal-mode="decoded">Декодированные</button>
             <button type="button" data-journal-mode="raw">Сырые HEX</button>
           </div>
-          <p class="journal-hint" id="journal-hint">Изменения декодированных данных бортов.</p>
+          <p class="journal-hint" id="journal-hint">Изменения декодированных данных бортов. Время записей — UTC.</p>
           <div id="journal-list" class="journal-list" aria-live="polite">
             <p class="empty-state">Ожидание декодированных сообщений…</p>
           </div>
+          <nav class="journal-pager" id="journal-pager" hidden aria-label="Страницы журнала">
+            <button id="journal-newer" type="button">Новее</button>
+            <span id="journal-range">0</span>
+            <button id="journal-older" type="button">Старше</button>
+          </nav>
         </section>
 
         <section class="tab-panel" id="panel-layers">
@@ -127,6 +139,7 @@
       <span class="aircraft-card__body">
         <span class="aircraft-card__flight"><strong></strong><small></small></span>
         <span class="aircraft-card__metrics"></span>
+        <span class="aircraft-card__squawk"></span>
         <span class="aircraft-card__zones"></span>
       </span>
     </button>

@@ -28,14 +28,39 @@ class RawMessageLog:
                 }
             )
 
-    async def recent(self, after_id: int = 0, limit: int = 100) -> dict[str, Any]:
+    async def recent(
+        self,
+        after_id: int = 0,
+        before_id: int = 0,
+        limit: int = 100,
+        newest_first: bool = False,
+    ) -> dict[str, Any]:
         async with self._lock:
-            messages = [
-                message for message in self._messages if message["id"] > after_id
-            ]
+            filtered = [message for message in self._messages if message["id"] > after_id]
+            if newest_first:
+                window = (
+                    filtered
+                    if before_id <= 0
+                    else [message for message in filtered if message["id"] < before_id]
+                )
+                page = list(reversed(window))[:limit]
+                oldest = page[-1]["id"] if page else 0
+                has_more = (
+                    any(message["id"] < oldest for message in filtered)
+                    if oldest
+                    else bool(filtered)
+                )
+                return {
+                    "messages": page,
+                    "last_id": self._sequence,
+                    "total": len(filtered),
+                    "has_more": has_more,
+                }
             return {
-                "messages": messages[-limit:],
+                "messages": filtered[-limit:],
                 "last_id": self._sequence,
+                "total": len(filtered),
+                "has_more": len(filtered) > limit,
             }
 
 
