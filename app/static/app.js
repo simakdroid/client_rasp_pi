@@ -32,6 +32,7 @@
     tracksVisible: true,
     selectedIcao: null,
     search: "",
+    healthSample: null,
   };
 
   const el = {};
@@ -77,6 +78,8 @@
       "message-rate", "visible-count", "aircraft-search", "aircraft-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks", "reload-layers", "reload-radio",
+      "receiver-card", "receiver-status", "receiver-messages", "receiver-rate",
+      "receiver-json-age", "receiver-aircraft",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -541,9 +544,43 @@
     try {
       const health = await fetchJson("/api/health");
       const adsb = health.adsb || {};
+      const messages = finite(adsb.messages);
+      const sampleTime = Date.now();
+      let rate = null;
+      if (
+        messages !== null &&
+        state.healthSample &&
+        messages >= state.healthSample.messages
+      ) {
+        const elapsedSeconds = (sampleTime - state.healthSample.time) / 1000;
+        if (elapsedSeconds > 0) {
+          rate = (messages - state.healthSample.messages) / elapsedSeconds;
+        }
+      }
+      if (messages !== null) {
+        state.healthSample = { messages, time: sampleTime };
+      }
+
+      const online = adsb.status === "online";
+      el["receiver-card"].dataset.state = online ? "online" : "offline";
+      el["receiver-status"].textContent = {
+        online: "Работает",
+        unavailable: "readsb недоступен",
+        stale: "Данные устарели",
+        invalid: "Ошибка JSON",
+      }[adsb.status] || "Неизвестно";
+      el["receiver-messages"].textContent =
+        messages === null ? "—" : messages.toLocaleString("ru-RU");
+      el["receiver-rate"].textContent = rate === null ? "—" : rate.toFixed(1);
+      const jsonAge = finite(adsb.json_age_s);
+      el["receiver-json-age"].textContent =
+        jsonAge === null ? "—" : `${jsonAge.toFixed(1)} с`;
+      const receiverAircraft = finite(adsb.aircraft);
+      el["receiver-aircraft"].textContent =
+        receiverAircraft === null ? "—" : String(receiverAircraft);
+
       if (adsb.status === "online") {
-        const messages = adsb.messages ?? 0;
-        setConnection("online", `ADS-B: ${messages.toLocaleString("ru-RU")} сообщений`);
+        setConnection("online", `ADS-B: ${(messages ?? 0).toLocaleString("ru-RU")} сообщений`);
       } else {
         const labels = {
           unavailable: "ADS-B: readsb недоступен",

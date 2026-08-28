@@ -56,6 +56,19 @@
             <h2>Борта поблизости</h2>
             <span id="visible-count">0</span>
           </div>
+          <section class="receiver-card" id="receiver-card" data-state="unknown" aria-label="Состояние ADS-B приёмника">
+            <div class="receiver-card__header">
+              <span class="receiver-card__dot" aria-hidden="true"></span>
+              <strong>ADS-B приёмник</strong>
+              <span id="receiver-status">Проверка…</span>
+            </div>
+            <div class="receiver-card__metrics">
+              <div><strong id="receiver-messages">—</strong><span>сообщений</span></div>
+              <div><strong id="receiver-rate">—</strong><span>сообщ./с</span></div>
+              <div><strong id="receiver-json-age">—</strong><span>возраст JSON</span></div>
+              <div><strong id="receiver-aircraft">—</strong><span>бортов</span></div>
+            </div>
+          </section>
           <label class="search">
             <span class="sr-only">Поиск борта</span>
             <input id="aircraft-search" type="search" placeholder="ICAO или позывной…" autocomplete="off">
