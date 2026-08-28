@@ -21,6 +21,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "Авиационный монитор" in page
         assert 'id="receiver-card"' not in page
         assert 'id="clock"' in page
+        assert "aircraft-card__flight" in page
         assert 'id="panel-journal"' in page
         assert 'data-journal-mode="raw"' in page
         assert client.get("/app.js").status_code == 200

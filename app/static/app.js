@@ -419,6 +419,7 @@
     const grid = document.createElement("div");
     grid.className = "tooltip-grid";
     const rows = [
+      ["Рейс", text(aircraft.callsign, "без позывного")],
       ["Высота", formatAltitude(aircraftAltitude(aircraft))],
       ["Скорость", formatSpeed(aircraftSpeed(aircraft))],
       ["Squawk", text(aircraft.squawk)],
@@ -541,15 +542,18 @@
       card.dataset.icao = aircraft.icao;
       card.classList.toggle("is-selected", state.selectedIcao === aircraft.icao);
       card.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
-      card.querySelector(".aircraft-card__identity strong").textContent = text(aircraft.callsign, aircraft.icao);
-      card.querySelector(".aircraft-card__identity small").textContent = aircraft.icao;
-      card.querySelector(".aircraft-card__metrics strong").textContent = formatAltitude(aircraftAltitude(aircraft));
+      card.querySelector(".aircraft-card__flight strong").textContent = text(
+        aircraft.callsign, "без позывного",
+      );
+      card.querySelector(".aircraft-card__flight small").textContent = aircraft.icao;
       const lat = finite(aircraft.lat ?? aircraft.latitude);
       const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-      card.querySelector(".aircraft-card__metrics small").textContent =
-        lat === null || lon === null
-          ? "нет координат"
-          : `${formatSpeed(aircraftSpeed(aircraft))} · ${formatDistance(aircraftDistance(aircraft))}`;
+      const bits = [
+        formatAltitude(aircraftAltitude(aircraft)),
+        formatSpeed(aircraftSpeed(aircraft)),
+      ];
+      bits.push(lat === null || lon === null ? "нет координат" : formatDistance(aircraftDistance(aircraft)));
+      card.querySelector(".aircraft-card__metrics").textContent = bits.join(" · ");
       card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
       card.addEventListener("click", () => selectAircraft(aircraft.icao));
       fragment.append(card);
