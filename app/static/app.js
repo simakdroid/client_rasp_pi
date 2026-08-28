@@ -28,13 +28,14 @@
     socket: null,
     reconnectTimer: null,
     reconnectAttempt: 0,
-    updatesThisSecond: 0,
     tracksVisible: true,
     selectedIcao: null,
     search: "",
-    healthSample: null,
+    journalMode: "decoded",
     journalEvents: [],
     lastEventId: 0,
+    rawMessages: [],
+    lastRawId: 0,
   };
 
   const el = {};
@@ -68,27 +69,24 @@
     createMap();
     await Promise.allSettled([
       loadInitialAircraft(),
-      loadAdsbMessages(),
+      loadJournal(),
       loadLayers(),
       loadRadioChannels(),
     ]);
     connectAircraftSocket();
     void refreshHealth();
-    window.setInterval(updateRate, 1000);
     window.setInterval(loadRadioChannels, 5000);
     window.setInterval(refreshHealth, 5000);
-    window.setInterval(loadAdsbMessages, 1000);
+    window.setInterval(loadJournal, 1000);
   }
 
   function cacheElements() {
     [
-      "station-name", "connection", "connection-text", "aircraft-count",
-      "message-rate", "visible-count", "aircraft-search", "aircraft-list",
+      "station-name", "connection", "connection-text",
+      "visible-count", "aircraft-search", "aircraft-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks", "reload-layers", "reload-radio",
-      "receiver-card", "receiver-status", "receiver-messages", "receiver-rate",
-      "receiver-json-age", "receiver-aircraft",
-      "journal-list", "journal-count", "clear-journal",
+      "journal-list", "journal-count", "journal-hint", "clear-journal",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -108,8 +106,19 @@
     el["reload-layers"].addEventListener("click", loadLayers);
     el["reload-radio"].addEventListener("click", loadRadioChannels);
     el["clear-journal"].addEventListener("click", () => {
-      state.journalEvents = [];
+      if (state.journalMode === "raw") state.rawMessages = [];
+      else state.journalEvents = [];
       renderJournal();
+    });
+    document.querySelectorAll("[data-journal-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.journalMode = button.dataset.journalMode;
+        document.querySelectorAll("[data-journal-mode]").forEach((item) => {
+          item.classList.toggle("is-active", item === button);
+        });
+        renderJournal();
+        void loadJournal();
+      });
     });
   }
 
@@ -251,7 +260,6 @@
   }
 
   function finishAircraftUpdate() {
-    el["aircraft-count"].textContent = String(state.aircraft.size);
     renderAircraftList();
   }
 
@@ -493,7 +501,6 @@
       setConnection("online", "В реальном времени");
     });
     state.socket.addEventListener("message", (event) => {
-      state.updatesThisSecond += 1;
       try {
         applySocketMessage(JSON.parse(event.data));
       } catch (error) {
@@ -548,52 +555,12 @@
     el["connection-text"].textContent = label;
   }
 
-  function updateRate() {
-    el["message-rate"].textContent = String(state.updatesThisSecond);
-    state.updatesThisSecond = 0;
-  }
-
   async function refreshHealth() {
     try {
       const health = await fetchJson("/api/health");
       const adsb = health.adsb || {};
-      const messages = finite(adsb.messages);
-      const sampleTime = Date.now();
-      let rate = null;
-      if (
-        messages !== null &&
-        state.healthSample &&
-        messages >= state.healthSample.messages
-      ) {
-        const elapsedSeconds = (sampleTime - state.healthSample.time) / 1000;
-        if (elapsedSeconds > 0) {
-          rate = (messages - state.healthSample.messages) / elapsedSeconds;
-        }
-      }
-      if (messages !== null) {
-        state.healthSample = { messages, time: sampleTime };
-      }
-
-      const online = adsb.status === "online";
-      el["receiver-card"].dataset.state = online ? "online" : "offline";
-      el["receiver-status"].textContent = {
-        online: "Работает",
-        unavailable: "readsb недоступен",
-        stale: "Данные устарели",
-        invalid: "Ошибка JSON",
-      }[adsb.status] || "Неизвестно";
-      el["receiver-messages"].textContent =
-        messages === null ? "—" : messages.toLocaleString("ru-RU");
-      el["receiver-rate"].textContent = rate === null ? "—" : rate.toFixed(1);
-      const jsonAge = finite(adsb.json_age_s);
-      el["receiver-json-age"].textContent =
-        jsonAge === null ? "—" : `${jsonAge.toFixed(1)} с`;
-      const receiverAircraft = finite(adsb.aircraft);
-      el["receiver-aircraft"].textContent =
-        receiverAircraft === null ? "—" : String(receiverAircraft);
-
       if (adsb.status === "online") {
-        setConnection("online", `ADS-B: ${(messages ?? 0).toLocaleString("ru-RU")} сообщений`);
+        setConnection("online", "ADS-B работает");
       } else {
         const labels = {
           unavailable: "ADS-B: readsb недоступен",
@@ -607,7 +574,12 @@
     }
   }
 
-  async function loadAdsbMessages() {
+  async function loadJournal() {
+    if (state.journalMode === "raw") await loadRawMessages();
+    else await loadDecodedMessages();
+  }
+
+  async function loadDecodedMessages() {
     try {
       const payload = await fetchJson(
         `/api/adsb/messages?after_id=${state.lastEventId}&limit=100`,
@@ -634,26 +606,74 @@
     }
   }
 
+  async function loadRawMessages() {
+    try {
+      const payload = await fetchJson(
+        `/api/adsb/raw?after_id=${state.lastRawId}&limit=100`,
+      );
+      const messages = Array.isArray(payload.messages) ? payload.messages : [];
+      state.lastRawId = Math.max(
+        state.lastRawId,
+        finite(payload.last_id) ?? 0,
+        ...messages.map((message) => finite(message.id) ?? 0),
+      );
+      if (messages.length) {
+        const knownIds = new Set(state.rawMessages.map((message) => message.id));
+        state.rawMessages.push(
+          ...messages.filter((message) => !knownIds.has(message.id)),
+        );
+        state.rawMessages = state.rawMessages.slice(-300);
+        renderJournal();
+      }
+    } catch (error) {
+      if (!state.rawMessages.length) {
+        el["journal-list"].replaceChildren(
+          emptyNode("Поток сырых ADS-B сообщений недоступен", true),
+        );
+      }
+      console.warn("Ошибка загрузки сырых ADS-B сообщений:", error);
+    }
+  }
+
   function renderJournal() {
-    el["journal-count"].textContent = String(state.journalEvents.length);
-    if (!state.journalEvents.length) {
+    const rawMode = state.journalMode === "raw";
+    const items = rawMode ? state.rawMessages : state.journalEvents;
+    el["journal-count"].textContent = String(items.length);
+    el["journal-hint"].textContent = rawMode
+      ? "AVR/Mode-S пакеты напрямую с TCP-порта readsb 30002."
+      : "Изменения декодированных данных бортов.";
+    if (!items.length) {
       el["journal-list"].replaceChildren(
-        emptyNode("Ожидание декодированных сообщений…"),
+        emptyNode(
+          rawMode
+            ? "Ожидание сырых Mode-S сообщений…"
+            : "Ожидание декодированных сообщений…",
+        ),
       );
       return;
     }
     const fragment = document.createDocumentFragment();
-    [...state.journalEvents].reverse().forEach((event) => {
+    [...items].reverse().forEach((event) => {
       const entry = document.createElement("article");
       entry.className = "journal-entry";
-      entry.dataset.kind = text(event.kind, "update");
-
       const timestamp = document.createElement("time");
       const date = new Date(event.timestamp);
       timestamp.textContent = Number.isNaN(date.getTime())
         ? "—"
         : date.toLocaleTimeString("ru-RU");
 
+      if (rawMode) {
+        entry.classList.add("is-raw");
+        const label = document.createElement("strong");
+        label.textContent = "MODE-S";
+        const code = document.createElement("code");
+        code.textContent = text(event.raw, "—");
+        entry.append(timestamp, label, code);
+        fragment.append(entry);
+        return;
+      }
+
+      entry.dataset.kind = text(event.kind, "update");
       const identity = document.createElement("strong");
       identity.textContent = `${text(event.icao, "------").toUpperCase()} ${text(event.callsign, "")}`.trim();
 

@@ -22,10 +22,6 @@
         <span class="connection__dot"></span>
         <span id="connection-text">Подключение…</span>
       </div>
-      <div class="stats" aria-label="Статистика">
-        <div><strong id="aircraft-count">0</strong><span>бортов</span></div>
-        <div><strong id="message-rate">—</strong><span>обновлений/с</span></div>
-      </div>
     </header>
 
     <main class="workspace">
@@ -57,19 +53,6 @@
             <h2>Борта поблизости</h2>
             <span id="visible-count">0</span>
           </div>
-          <section class="receiver-card" id="receiver-card" data-state="unknown" aria-label="Состояние ADS-B приёмника">
-            <div class="receiver-card__header">
-              <span class="receiver-card__dot" aria-hidden="true"></span>
-              <strong>ADS-B приёмник</strong>
-              <span id="receiver-status">Проверка…</span>
-            </div>
-            <div class="receiver-card__metrics">
-              <div><strong id="receiver-messages">—</strong><span>сообщений</span></div>
-              <div><strong id="receiver-rate">—</strong><span>сообщ./с</span></div>
-              <div><strong id="receiver-json-age">—</strong><span>возраст JSON</span></div>
-              <div><strong id="receiver-aircraft">—</strong><span>бортов</span></div>
-            </div>
-          </section>
           <label class="search">
             <span class="sr-only">Поиск борта</span>
             <input id="aircraft-search" type="search" placeholder="ICAO или позывной…" autocomplete="off">
@@ -81,13 +64,17 @@
 
         <section class="tab-panel" id="panel-journal">
           <div class="panel-heading">
-            <h2>Декодированные сообщения</h2>
+            <h2>Журнал ADS-B</h2>
             <div class="panel-heading__actions">
               <span id="journal-count">0</span>
               <button id="clear-journal" class="text-button" type="button">Очистить</button>
             </div>
           </div>
-          <p class="journal-hint">Показываются изменения данных бортов, а не сырые Mode-S hex-пакеты.</p>
+          <div class="journal-mode" role="group" aria-label="Формат сообщений">
+            <button class="is-active" type="button" data-journal-mode="decoded">Декодированные</button>
+            <button type="button" data-journal-mode="raw">Сырые HEX</button>
+          </div>
+          <p class="journal-hint" id="journal-hint">Изменения декодированных данных бортов.</p>
           <div id="journal-list" class="journal-list" aria-live="polite">
             <p class="empty-state">Ожидание декодированных сообщений…</p>
           </div>

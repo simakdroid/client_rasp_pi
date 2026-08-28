@@ -18,6 +18,7 @@ from .config import Settings, get_settings
 from .diagnostics import read_adsb_status
 from .gis import LayerManager
 from .radio import RadioMonitor
+from .raw_messages import RawMessageLog, ingest_raw_messages
 from .tracker import AircraftTracker
 
 LOGGER = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.event_log_size,
     )
     hub = BroadcastHub()
+    raw_messages = RawMessageLog(settings.raw_log_size)
     radio = RadioMonitor(
         settings.radio_channels,
         settings.radio_stats_path,
@@ -51,6 +53,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source = _create_source(settings)
         tasks = [
             asyncio.create_task(_ingest(source, tracker), name="adsb-ingest"),
+            asyncio.create_task(
+                ingest_raw_messages(
+                    settings.raw_host, settings.raw_port, raw_messages
+                ),
+                name="adsb-raw-ingest",
+            ),
             asyncio.create_task(
                 _broadcast_loop(tracker, hub, settings.websocket_interval_s),
                 name="ws-broadcast",
@@ -69,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.layers = layers
     app.state.tracker = tracker
     app.state.hub = hub
+    app.state.raw_messages = raw_messages
 
     if settings.cors_origins:
         app.add_middleware(
@@ -123,6 +132,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, object]:
         return await tracker.recent_events(after_id=after_id, limit=limit)
+
+    @app.get("/api/adsb/raw")
+    async def adsb_raw_messages(
+        after_id: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, object]:
+        return await raw_messages.recent(after_id=after_id, limit=limit)
 
     @app.get("/api/layers")
     async def layer_list() -> list[dict[str, object]]:
