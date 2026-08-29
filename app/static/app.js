@@ -40,11 +40,6 @@
     selectedIcao: null,
     search: "",
     journalMode: "decoded",
-    journalPageSize: 25,
-    journalCursors: { decoded: [0], raw: [0] },
-    journalClearedAfter: { decoded: 0, raw: 0 },
-    journalTotal: { decoded: 0, raw: 0 },
-    journalHasMore: { decoded: false, raw: false },
     journalEvents: [],
     lastEventId: 0,
     rawMessages: [],
@@ -107,7 +102,6 @@
       "coverage-visible", "coverage-stats", "reset-coverage",
       "reload-layers", "reload-radio",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
-      "journal-pager", "journal-range", "journal-newer", "journal-older",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -132,8 +126,6 @@
     el["reload-layers"].addEventListener("click", loadLayers);
     el["reload-radio"].addEventListener("click", loadRadioChannels);
     el["clear-journal"].addEventListener("click", clearJournal);
-    el["journal-newer"].addEventListener("click", () => pageJournal("newer"));
-    el["journal-older"].addEventListener("click", () => pageJournal("older"));
     document.querySelectorAll("[data-journal-mode]").forEach((button) => {
       button.addEventListener("click", () => {
         state.journalMode = button.dataset.journalMode;
@@ -952,77 +944,47 @@
     }
   }
 
+  const JOURNAL_LIMIT = 400;
+
   async function loadJournal() {
     if (state.journalMode === "raw") await loadRawMessages();
     else await loadDecodedMessages();
   }
 
-  function journalQuery(mode) {
-    const cursors = state.journalCursors[mode];
-    const beforeId = cursors[cursors.length - 1] || 0;
-    const afterId = state.journalClearedAfter[mode];
-    return `after_id=${afterId}&before_id=${beforeId}&limit=${state.journalPageSize}&newest_first=true`;
-  }
-
-  function applyJournalPage(mode, items, payload) {
-    const lastId = finite(payload.last_id) ?? 0;
-    if (mode === "raw") {
-      state.rawMessages = items;
-      state.lastRawId = lastId;
-    } else {
-      state.journalEvents = items;
-      state.lastEventId = lastId;
-    }
-    state.journalTotal[mode] = finite(payload.total) ?? items.length;
-    state.journalHasMore[mode] = Boolean(payload.has_more);
-    if (!items.length && state.journalCursors[mode].length > 1) {
-      state.journalCursors[mode].pop();
-      void loadJournal();
-      return;
-    }
-    renderJournal();
+  function mergeJournalItems(existing, incoming) {
+    if (!incoming.length) return existing;
+    const knownIds = new Set(existing.map((item) => item.id));
+    return existing.concat(incoming.filter((item) => !knownIds.has(item.id))).slice(-JOURNAL_LIMIT);
   }
 
   function clearJournal() {
-    const mode = state.journalMode;
-    const lastId = mode === "raw" ? state.lastRawId : state.lastEventId;
-    state.journalClearedAfter[mode] = lastId;
-    state.journalCursors[mode] = [0];
-    if (mode === "raw") state.rawMessages = [];
+    if (state.journalMode === "raw") state.rawMessages = [];
     else state.journalEvents = [];
-    state.journalTotal[mode] = 0;
-    state.journalHasMore[mode] = false;
     renderJournal();
-    void loadJournal();
-  }
-
-  function pageJournal(direction) {
-    const mode = state.journalMode;
-    const cursors = state.journalCursors[mode];
-    if (direction === "newer") {
-      if (cursors.length <= 1) return;
-      cursors.pop();
-    } else {
-      const items = mode === "raw" ? state.rawMessages : state.journalEvents;
-      if (!items.length || !state.journalHasMore[mode]) return;
-      const oldest = Math.min(...items.map((item) => finite(item.id) ?? Infinity));
-      if (!Number.isFinite(oldest)) return;
-      cursors.push(oldest);
-    }
-    void loadJournal();
   }
 
   async function loadDecodedMessages() {
     try {
-      const payload = await fetchJson(`/api/adsb/messages?${journalQuery("decoded")}`);
+      const payload = await fetchJson(
+        `/api/adsb/messages?after_id=${state.lastEventId}&limit=${JOURNAL_LIMIT}`,
+      );
       const events = Array.isArray(payload.events) ? payload.events : [];
-      applyJournalPage("decoded", events, payload);
+      state.lastEventId = Math.max(
+        state.lastEventId,
+        finite(payload.last_id) ?? 0,
+        ...events.map((event) => finite(event.id) ?? 0),
+      );
+      if (events.length) {
+        state.journalEvents = mergeJournalItems(state.journalEvents, events);
+        renderJournal();
+      } else if (!state.journalEvents.length) {
+        renderJournal();
+      }
     } catch (error) {
       if (!state.journalEvents.length) {
         el["journal-list"].replaceChildren(
           emptyNode("Журнал ADS-B недоступен", true),
         );
-        el["journal-pager"].hidden = true;
       }
       console.warn("Ошибка загрузки журнала ADS-B:", error);
     }
@@ -1030,15 +992,26 @@
 
   async function loadRawMessages() {
     try {
-      const payload = await fetchJson(`/api/adsb/raw?${journalQuery("raw")}`);
+      const payload = await fetchJson(
+        `/api/adsb/raw?after_id=${state.lastRawId}&limit=${JOURNAL_LIMIT}`,
+      );
       const messages = Array.isArray(payload.messages) ? payload.messages : [];
-      applyJournalPage("raw", messages, payload);
+      state.lastRawId = Math.max(
+        state.lastRawId,
+        finite(payload.last_id) ?? 0,
+        ...messages.map((message) => finite(message.id) ?? 0),
+      );
+      if (messages.length) {
+        state.rawMessages = mergeJournalItems(state.rawMessages, messages);
+        renderJournal();
+      } else if (!state.rawMessages.length) {
+        renderJournal();
+      }
     } catch (error) {
       if (!state.rawMessages.length) {
         el["journal-list"].replaceChildren(
           emptyNode("Поток сырых ADS-B сообщений недоступен", true),
         );
-        el["journal-pager"].hidden = true;
       }
       console.warn("Ошибка загрузки сырых ADS-B сообщений:", error);
     }
@@ -1046,22 +1019,17 @@
 
   function renderJournal() {
     const rawMode = state.journalMode === "raw";
-    const mode = rawMode ? "raw" : "decoded";
     const items = rawMode ? state.rawMessages : state.journalEvents;
-    const total = state.journalTotal[mode];
-    el["journal-count"].textContent = String(total);
+    const list = el["journal-list"];
+    const stickToNewest = list.scrollTop < 32;
+    const previousHeight = list.scrollHeight;
+    const previousTop = list.scrollTop;
+    el["journal-count"].textContent = String(items.length);
     el["journal-hint"].textContent = rawMode
       ? "AVR/Mode-S пакеты напрямую с TCP-порта readsb 30002. Время записей — UTC."
       : "Изменения декодированных данных бортов. Время записей — UTC.";
-    const onFirstPage = state.journalCursors[mode].length <= 1;
-    el["journal-newer"].disabled = onFirstPage;
-    el["journal-older"].disabled = !state.journalHasMore[mode] || !items.length;
-    el["journal-range"].textContent = items.length
-      ? `${items.length} из ${total}`
-      : `0 из ${total}`;
-    el["journal-pager"].hidden = total <= state.journalPageSize && onFirstPage;
     if (!items.length) {
-      el["journal-list"].replaceChildren(
+      list.replaceChildren(
         emptyNode(
           rawMode
             ? "Ожидание сырых Mode-S сообщений…"
@@ -1071,7 +1039,7 @@
       return;
     }
     const fragment = document.createDocumentFragment();
-    items.forEach((event) => {
+    [...items].reverse().forEach((event) => {
       const entry = document.createElement("article");
       entry.className = "journal-entry";
       const timestamp = document.createElement("time");
@@ -1100,7 +1068,9 @@
       entry.append(timestamp, identity, message);
       fragment.append(entry);
     });
-    el["journal-list"].replaceChildren(fragment);
+    list.replaceChildren(fragment);
+    if (stickToNewest) list.scrollTop = 0;
+    else list.scrollTop = previousTop + (list.scrollHeight - previousHeight);
   }
 
   async function loadLayers() {

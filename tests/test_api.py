@@ -28,7 +28,8 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "aircraft-card__flight" in page
         assert 'id="panel-journal"' in page
         assert 'data-journal-mode="raw"' in page
-        assert 'id="journal-pager"' in page
+        assert 'id="journal-list"' in page
+        assert 'id="journal-pager"' not in page
         assert 'id="archive-section"' in page
         assert "aircraft-card__squawk" in page
         assert "Время записей — UTC" in page

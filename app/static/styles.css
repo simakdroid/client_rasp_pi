@@ -219,6 +219,7 @@ h1, h2, h3, p { margin: 0; }
 
 .tab-panel { min-height: 0; display: none; overflow: auto; padding: 15px; }
 .tab-panel.is-active { display: flex; flex-direction: column; }
+#panel-journal.tab-panel { overflow: hidden; }
 
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { font-size: 14px; }
@@ -276,38 +277,23 @@ h1, h2, h3, p { margin: 0; }
   display: grid;
   align-content: start;
   gap: 6px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #4a7fa0 #071521;
 }
-.journal-pager {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
+.journal-list::-webkit-scrollbar { width: 10px; }
+.journal-list::-webkit-scrollbar-track {
+  background: #071521;
+  border-radius: 6px;
 }
-.journal-pager button {
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel-2);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 11px;
+.journal-list::-webkit-scrollbar-thumb {
+  background: #3d6a88;
+  border-radius: 6px;
 }
-.journal-pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.journal-pager button:disabled {
-  color: var(--muted);
-  cursor: default;
-  opacity: .55;
-}
-.journal-pager span {
-  color: var(--muted);
-  text-align: center;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
+.journal-list::-webkit-scrollbar-thumb:hover { background: #36b7ff; }
 .journal-entry {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
