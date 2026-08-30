@@ -25,6 +25,8 @@ async def test_raw_message_log_is_incremental_and_bounded() -> None:
     assert recent["last_id"] == 3
     newest = await message_log.recent(limit=1, newest_first=True)
     assert newest["messages"][0]["raw"] == "*8DA05F219B06B6AF189400CBC33F;"
+    assert newest["messages"][0]["icao"] == "a05f21"
+    assert newest["messages"][0]["df"] == 17
     assert newest["total"] == 2
     assert newest["has_more"] is True
     older = await message_log.recent(

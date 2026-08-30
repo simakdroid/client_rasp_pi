@@ -7,6 +7,8 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+from .mode_s import decode_avr
+
 LOGGER = logging.getLogger(__name__)
 HEX_DIGITS = frozenset("0123456789ABCDEF")
 
@@ -20,13 +22,13 @@ class RawMessageLog:
     async def append(self, raw: str) -> None:
         async with self._lock:
             self._sequence += 1
-            self._messages.append(
-                {
-                    "id": self._sequence,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                    "raw": raw,
-                }
-            )
+            entry = {
+                "id": self._sequence,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "raw": raw,
+            }
+            entry.update(decode_avr(raw))
+            self._messages.append(entry)
 
     async def recent(
         self,

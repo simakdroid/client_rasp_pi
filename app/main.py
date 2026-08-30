@@ -160,12 +160,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = Query(default=100, ge=1, le=500),
         newest_first: bool = Query(default=False),
     ) -> dict[str, object]:
-        return await raw_messages.recent(
+        payload = await raw_messages.recent(
             after_id=after_id,
             before_id=before_id,
             limit=limit,
             newest_first=newest_first,
         )
+        payload["messages"] = await tracker.attach_mode_s_context(payload["messages"])
+        return payload
 
     @app.get("/api/layers")
     async def layer_list() -> list[dict[str, object]]:

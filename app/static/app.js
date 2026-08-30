@@ -1029,7 +1029,7 @@
     const previousTop = list.scrollTop;
     el["journal-count"].textContent = String(items.length);
     el["journal-hint"].textContent = rawMode
-      ? "AVR/Mode-S пакеты напрямую с TCP-порта readsb 30002. Время записей — UTC."
+      ? "Кадры Mode-S с порта readsb 30002: тип DF, ICAO, высота/squawk, дальность если борт уже декодирован. Время — UTC."
       : "Изменения декодированных данных бортов. Время записей — UTC.";
     if (!items.length) {
       list.replaceChildren(
@@ -1054,10 +1054,14 @@
       if (rawMode) {
         entry.classList.add("is-raw");
         const label = document.createElement("strong");
-        label.textContent = "MODE-S";
+        const icao = text(event.icao, "").toUpperCase();
+        const callsign = text(event.callsign, "");
+        label.textContent = [icao || "MODE-S", callsign].filter(Boolean).join(" ");
+        const details = document.createElement("p");
+        details.textContent = text(event.text, text(event.df_label, "Mode-S"));
         const code = document.createElement("code");
         code.textContent = text(event.raw, "—");
-        entry.append(timestamp, label, code);
+        entry.append(timestamp, label, details, code);
         fragment.append(entry);
         return;
       }

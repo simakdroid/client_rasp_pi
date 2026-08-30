@@ -10,6 +10,7 @@ from pyproj import Geod
 
 from .coverage import CoverageRose
 from .gis import LayerManager
+from .mode_s import summary_text
 from .models import AircraftState, AircraftUpdate, Position
 
 GEOD = Geod(ellps="WGS84")
@@ -82,6 +83,26 @@ class AircraftTracker:
     async def flush_coverage(self) -> None:
         async with self._lock:
             self._coverage.flush()
+
+    async def attach_mode_s_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        async with self._lock:
+            enriched: list[dict[str, Any]] = []
+            for message in messages:
+                item = dict(message)
+                icao = str(item.get("icao") or "").lower()
+                state = self._aircraft.get(icao) or self._archive.get(icao)
+                if state:
+                    item["known"] = True
+                    item["distance_km"] = state.distance_km
+                    if not item.get("callsign") and state.callsign:
+                        item["callsign"] = state.callsign
+                    if item.get("altitude_ft") is None:
+                        item["altitude_ft"] = state.altitude_ft
+                    if not item.get("squawk"):
+                        item["squawk"] = state.squawk
+                    item["text"] = summary_text(item)
+                enriched.append(item)
+            return enriched
 
     async def snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:

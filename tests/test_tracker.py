@@ -59,6 +59,31 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tracker_attaches_distance_to_mode_s(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="40621d",
+                lat=55.1,
+                lon=37.1,
+                callsign="BAW123",
+                received_at=datetime.now(UTC),
+            )
+        ]
+    )
+    enriched = await tracker.attach_mode_s_context(
+        [{"icao": "40621d", "df_label": "ADS-B, позиция в воздухе", "callsign": None}]
+    )
+    assert enriched[0]["known"] is True
+    assert enriched[0]["callsign"] == "BAW123"
+    assert enriched[0]["distance_km"] > 0
+    assert "км" in enriched[0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     layers = LayerManager(tmp_path)
     layers.refresh()
