@@ -751,6 +751,12 @@
     return card;
   }
 
+  function replaceKeepingScroll(list, node) {
+    const top = list.scrollTop;
+    list.replaceChildren(node);
+    list.scrollTop = top;
+  }
+
   function renderAircraftList() {
     const fragment = document.createDocumentFragment();
     const items = [...state.aircraft.values()]
@@ -763,7 +769,8 @@
       });
 
     items.forEach((aircraft) => fragment.append(fillAircraftCard(aircraft)));
-    el["aircraft-list"].replaceChildren(
+    replaceKeepingScroll(
+      el["aircraft-list"],
       fragment.childNodes.length ? fragment : emptyNode(state.search ? "Ничего не найдено" : "Нет активных бортов"),
     );
     el["visible-count"].textContent = String(items.length);
@@ -776,7 +783,8 @@
       .sort((a, b) => text(b.lost_at, "").localeCompare(text(a.lost_at, "")));
     el["archive-section"].hidden = items.length === 0 && !state.search;
     if (!items.length) {
-      el["archive-list"].replaceChildren(
+      replaceKeepingScroll(
+        el["archive-list"],
         emptyNode(state.search && state.archived.size ? "Ничего не найдено в архиве" : "Архив пуст"),
       );
       el["archive-count"].textContent = "0";
@@ -785,7 +793,7 @@
     }
     const fragment = document.createDocumentFragment();
     items.forEach((aircraft) => fragment.append(fillAircraftCard(aircraft, true)));
-    el["archive-list"].replaceChildren(fragment);
+    replaceKeepingScroll(el["archive-list"], fragment);
     el["archive-count"].textContent = String(items.length);
   }
 

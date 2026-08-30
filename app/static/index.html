@@ -64,7 +64,7 @@
             <span class="sr-only">Поиск борта</span>
             <input id="aircraft-search" type="search" placeholder="ICAO или позывной…" autocomplete="off">
           </label>
-          <div id="aircraft-list" class="aircraft-list">
+          <div id="aircraft-list" class="aircraft-list pane-scroll" aria-live="polite" tabindex="0">
             <p class="empty-state">Ожидание данных о бортах…</p>
           </div>
           <section id="archive-section" class="archive-section" hidden>
@@ -72,7 +72,7 @@
               <h2>Архив</h2>
               <span id="archive-count">0</span>
             </div>
-            <div id="archive-list" class="aircraft-list"></div>
+            <div id="archive-list" class="aircraft-list pane-scroll" tabindex="0"></div>
           </section>
         </section>
 
@@ -89,7 +89,7 @@
             <button type="button" data-journal-mode="raw">Сырые HEX</button>
           </div>
           <p class="journal-hint" id="journal-hint">Изменения декодированных данных бортов. Время записей — UTC.</p>
-          <div id="journal-list" class="journal-list" aria-live="polite" tabindex="0">
+          <div id="journal-list" class="journal-list pane-scroll" aria-live="polite" tabindex="0">
             <p class="empty-state">Ожидание декодированных сообщений…</p>
           </div>
         </section>

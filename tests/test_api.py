@@ -31,6 +31,9 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="journal-list"' in page
         assert 'id="journal-pager"' not in page
         assert 'id="archive-section"' in page
+        assert 'id="aircraft-list"' in page
+        assert 'id="archive-list"' in page
+        assert "pane-scroll" in page
         assert "aircraft-card__squawk" in page
         assert "aircraft-card__type" in page
         assert "Время записей — UTC" in page

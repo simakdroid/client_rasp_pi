@@ -253,7 +253,8 @@ h1, h2, h3, p { margin: 0; }
   min-height: 0;
   overflow: hidden;
 }
-#panel-journal.tab-panel { overflow: hidden; }
+#panel-journal.tab-panel,
+#panel-aircraft.tab-panel { overflow: hidden; }
 
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { font-size: 14px; }
@@ -312,6 +313,8 @@ h1, h2, h3, p { margin: 0; }
   display: grid;
   align-content: start;
   gap: 6px;
+}
+.pane-scroll {
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior: contain;
@@ -322,16 +325,16 @@ h1, h2, h3, p { margin: 0; }
   scrollbar-width: thin;
   scrollbar-color: #4a7fa0 #071521;
 }
-.journal-list::-webkit-scrollbar { width: 10px; }
-.journal-list::-webkit-scrollbar-track {
+.pane-scroll::-webkit-scrollbar { width: 10px; }
+.pane-scroll::-webkit-scrollbar-track {
   background: #071521;
   border-radius: 6px;
 }
-.journal-list::-webkit-scrollbar-thumb {
+.pane-scroll::-webkit-scrollbar-thumb {
   background: #3d6a88;
   border-radius: 6px;
 }
-.journal-list::-webkit-scrollbar-thumb:hover { background: #36b7ff; }
+.pane-scroll::-webkit-scrollbar-thumb:hover { background: #36b7ff; }
 .journal-entry {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -390,6 +393,13 @@ h1, h2, h3, p { margin: 0; }
 .search input::placeholder { color: #60798e; }
 
 .aircraft-list, .radio-list { display: grid; align-content: start; gap: 6px; }
+#panel-aircraft .panel-heading,
+#panel-aircraft .search { flex-shrink: 0; }
+#aircraft-list {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+}
 .aircraft-card {
   position: relative;
   min-width: 0;
@@ -450,9 +460,22 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__lost { color: var(--muted); font-size: 10px; }
 
 .archive-section {
-  margin-top: 16px;
-  padding-top: 12px;
+  flex: 0 1 42%;
+  min-width: 0;
+  min-height: 9rem;
+  max-height: 48%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px solid var(--line);
+}
+.archive-section .panel-heading { flex-shrink: 0; }
+#archive-list {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
 }
 
 .layer-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
