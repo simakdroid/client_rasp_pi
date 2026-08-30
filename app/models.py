@@ -29,6 +29,8 @@ class AircraftUpdate(BaseModel):
     vertical_rate_fpm: int | None = None
     squawk: str | None = None
     category: str | None = None
+    type_code: str | None = None
+    type_desc: str | None = None
     on_ground: bool | None = None
     seen_s: float = 0
     received_at: datetime = Field(default_factory=utc_now)
@@ -47,6 +49,8 @@ class AircraftState:
     vertical_rate_fpm: int | None = None
     squawk: str | None = None
     category: str | None = None
+    type_code: str | None = None
+    type_desc: str | None = None
     on_ground: bool | None = None
     distance_km: float | None = None
     geofences: set[str] = field(default_factory=set)
@@ -69,6 +73,8 @@ class AircraftState:
             "vertical_rate_fpm": self.vertical_rate_fpm,
             "squawk": self.squawk,
             "category": self.category,
+            "type_code": self.type_code,
+            "type_desc": self.type_desc,
             "on_ground": self.on_ground,
             "distance_km": self.distance_km,
             "geofences": sorted(self.geofences),

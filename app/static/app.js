@@ -13,7 +13,8 @@
    * истории. Aircraft обязан содержать icao (или hex), lat, lon; остальные
    * используемые поля необязательны: callsign, altitude/alt_baro,
    * speed/ground_speed, squawk, track/heading, distance, trail/positions
-   * (массив точек [lat, lon] или {lat, lon}), lost_at для архива.
+   * (массив точек [lat, lon] или {lat, lon}), type_code/t, type_desc/desc,
+   * category, lost_at для архива.
    */
 
   const state = {
@@ -456,6 +457,15 @@
     const callsign = document.createElement("div");
     callsign.className = "aircraft-label__id";
     callsign.textContent = text(aircraft.callsign, aircraft.icao).trim();
+    root.append(callsign);
+
+    const typeLabel = formatAircraftType(aircraft, true);
+    if (typeLabel) {
+      const typeLine = document.createElement("div");
+      typeLine.className = "aircraft-label__type";
+      typeLine.textContent = typeLabel;
+      root.append(typeLine);
+    }
 
     const altitude = aircraftAltitude(aircraft);
     const verticalRate = finite(
@@ -470,8 +480,8 @@
     motion.textContent = `${aircraft.on_ground ? "GND" : formatBlockAltitude(altitude)}${trend}${
       speed === null ? "" : ` ${String(Math.round(speed)).padStart(3, "0")}`
     }`;
+    root.append(motion);
 
-    root.append(callsign, motion);
     const squawk = text(aircraft.squawk, "");
     const third = squawk || (callsign.textContent !== aircraft.icao ? aircraft.icao : "");
     if (third) {
@@ -504,6 +514,7 @@
     grid.className = "tooltip-grid";
     const rows = [
       ["Рейс", text(aircraft.callsign, "без позывного")],
+      ["Тип ВС", formatAircraftType(aircraft) || "—"],
       ["Высота", formatAltitude(aircraftAltitude(aircraft))],
       ["Скорость", formatSpeed(aircraftSpeed(aircraft))],
       ["Squawk", text(aircraft.squawk)],
@@ -701,7 +712,10 @@
   }
 
   function matchesSearch(aircraft) {
-    const haystack = `${aircraft.icao} ${text(aircraft.callsign, "")} ${text(aircraft.squawk, "")}`.toUpperCase();
+    const haystack = [
+      aircraft.icao, text(aircraft.callsign, ""), text(aircraft.squawk, ""),
+      aircraftTypeCode(aircraft), text(aircraft.type_desc, ""),
+    ].join(" ").toUpperCase();
     return !state.search || haystack.includes(state.search);
   }
 
@@ -715,6 +729,7 @@
       aircraft.callsign, "без позывного",
     );
     card.querySelector(".aircraft-card__flight small").textContent = aircraft.icao;
+    card.querySelector(".aircraft-card__type").textContent = formatAircraftType(aircraft);
     const lat = finite(aircraft.lat ?? aircraft.latitude);
     const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     const bits = [
@@ -791,6 +806,44 @@
     const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     if (!state.station || lat === null || lon === null) return null;
     return haversineKm(state.station.lat, state.station.lon, lat, lon);
+  }
+
+  const CATEGORY_LABELS = {
+    A0: "Нет категории",
+    A1: "Лёгкое",
+    A2: "Небольшое",
+    A3: "Среднее",
+    A4: "Крупное (B757)",
+    A5: "Тяжёлое",
+    A6: "Высокоскоростное",
+    A7: "Вертолёт",
+    B0: "Нет категории",
+    B1: "Планер",
+    B2: "Дирижабль",
+    B3: "Парашютист",
+    B4: "Сверхлёгкое",
+    B6: "БПЛА",
+    B7: "Космический аппарат",
+    C0: "Наземный объект",
+    C1: "Аэродромная спецтехника",
+    C2: "Аэродромный транспорт",
+    C3: "Препятствие",
+  };
+
+  function aircraftTypeCode(aircraft) {
+    return text(aircraft.type_code ?? aircraft.t ?? aircraft.type, "").toUpperCase();
+  }
+
+  function formatAircraftType(aircraft, compact = false) {
+    const code = aircraftTypeCode(aircraft);
+    const desc = text(aircraft.type_desc ?? aircraft.desc, "");
+    if (code && desc && !compact) return `${code} · ${desc}`;
+    if (code) return code;
+    const category = text(aircraft.category, "").toUpperCase();
+    if (!category) return "";
+    const label = CATEGORY_LABELS[category];
+    if (compact) return label || category;
+    return label ? `${label} · ${category}` : category;
   }
 
   function altitudeColor(altitude) {

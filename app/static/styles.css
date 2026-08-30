@@ -422,6 +422,14 @@ h1, h2, h3, p { margin: 0; }
   white-space: nowrap;
 }
 .aircraft-card__flight small { color: var(--muted); font-size: 10px; letter-spacing: .04em; }
+.aircraft-card__type {
+  overflow: hidden;
+  color: #9ee0ff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aircraft-card__type:empty { display: none; }
 .aircraft-card__metrics { color: var(--muted); font-size: 11px; }
 .aircraft-card__squawk {
   color: #9ee0ff;
@@ -521,6 +529,7 @@ h1, h2, h3, p { margin: 0; }
   filter: grayscale(.2);
 }
 .aircraft-label__id { color: #fff; font-weight: 700; letter-spacing: .02em; }
+.aircraft-label__type { color: var(--accent); }
 .aircraft-label__line { color: #d5e6f4; }
 .aircraft-label__zone {
   max-width: 118px;

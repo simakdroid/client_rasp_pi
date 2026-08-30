@@ -210,6 +210,8 @@ class AircraftTracker:
             "vertical_rate_fpm",
             "squawk",
             "category",
+            "type_code",
+            "type_desc",
             "on_ground",
         ):
             value = getattr(update, name)

@@ -24,6 +24,8 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
                 lat=55.2,
                 lon=37.2,
                 altitude_ft=1000,
+                type_code="B738",
+                type_desc="Boeing 737-800",
                 received_at=timestamp + timedelta(seconds=30),
             )
         ]
@@ -37,6 +39,9 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
     assert "track" not in aircraft
     assert aircraft["calculated_track_deg"] is not None
     assert aircraft["distance_km"] > 0
+    snapshot = await tracker.snapshot()
+    assert snapshot[0]["type_code"] == "B738"
+    assert snapshot[0]["type_desc"] == "Boeing 737-800"
 
     journal = await tracker.recent_events()
     assert len(journal["events"]) == 2

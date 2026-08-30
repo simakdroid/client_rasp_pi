@@ -13,6 +13,9 @@ def test_parse_readsb_aircraft() -> None:
             "alt_baro": 10000,
             "gs": 420.5,
             "track": 361,
+            "t": "b738",
+            "desc": "Boeing 737-800",
+            "category": "A3",
             "seen": 0.5,
         },
         datetime(2026, 1, 1, tzinfo=UTC),
@@ -22,6 +25,9 @@ def test_parse_readsb_aircraft() -> None:
     assert update.icao == "abc123"
     assert update.callsign == "TEST42"
     assert update.track_deg == 1
+    assert update.type_code == "B738"
+    assert update.type_desc == "Boeing 737-800"
+    assert update.category == "A3"
 
 
 def test_parse_stale_readsb_aircraft() -> None:

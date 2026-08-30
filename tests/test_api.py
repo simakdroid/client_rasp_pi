@@ -32,6 +32,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="journal-pager"' not in page
         assert 'id="archive-section"' in page
         assert "aircraft-card__squawk" in page
+        assert "aircraft-card__type" in page
         assert "Время записей — UTC" in page
         assert client.get("/api/aircraft").json()["archived"] == []
         coverage = client.get("/api/coverage").json()
