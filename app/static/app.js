@@ -189,6 +189,9 @@
     state.map.on("dragstart", () => {
       if (!state.autoFitting) state.mapUserMoved = true;
     });
+    state.map.getContainer().addEventListener("focusin", () => {
+      window.scrollTo(0, 0);
+    });
     if (state.station) {
       L.circleMarker([state.station.lat, state.station.lon], {
         radius: 6,
