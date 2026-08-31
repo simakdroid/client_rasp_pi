@@ -28,6 +28,23 @@ def test_catalog_roundtrip_and_fallback(tmp_path) -> None:
     assert reloaded.lookup("424B4D") is None
 
 
+def test_catalog_reloads_when_json_file_changes(tmp_path) -> None:
+    path = tmp_path / "aircraft-types.json"
+    catalog = AircraftTypeCatalog(path)
+    assert catalog.list() == []
+    path.write_text(
+        '{"abc123": {"type_code": "B738", "type_desc": "Boeing 737-800"}}\n',
+        encoding="utf-8",
+    )
+    assert catalog.list() == [
+        {"icao": "ABC123", "type_code": "B738", "type_desc": "Boeing 737-800"},
+    ]
+    path.write_text('{"abc123": {"type_code": "A320"}}\n', encoding="utf-8")
+    payload = {"icao": "abc123", "type_code": None}
+    catalog.apply(payload)
+    assert payload["type_code"] == "A320"
+
+
 @pytest.mark.asyncio
 async def test_tracker_uses_catalog_only_when_type_missing(tmp_path) -> None:
     layers = LayerManager(tmp_path)

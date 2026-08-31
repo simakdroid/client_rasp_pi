@@ -13,7 +13,7 @@ TYPE_CODE_RE = re.compile(r"^[A-Z0-9]{2,6}$")
 
 
 def normalize_icao(value: object) -> str:
-    icao = str(value or "").strip().lower()
+    icao = str(value or "").strip().lower().lstrip("~")
     if not ICAO_RE.fullmatch(icao):
         raise ValueError("ICAO must be a 24-bit hex address")
     return icao
@@ -32,24 +32,48 @@ class AircraftTypeCatalog:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path
         self._entries: dict[str, dict[str, str]] = {}
+        self._fingerprint: tuple[int, int] | None = None
         self.load()
 
-    def load(self) -> None:
-        self._entries = {}
+    def load(self) -> bool:
+        previous = dict(self._entries)
         if self.path is None or not self.path.is_file():
-            return
+            self._entries = {}
+            self._fingerprint = None
+            return previous != self._entries
         try:
+            self._fingerprint = self._file_fingerprint()
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             LOGGER.warning("Cannot read aircraft types %s: %s", self.path, exc)
-            return
+            return False
         if not isinstance(payload, dict):
-            return
+            LOGGER.warning("Aircraft types %s must be a JSON object of ICAO → type", self.path)
+            return False
+        entries: dict[str, dict[str, str]] = {}
         for raw_icao, raw_entry in payload.items():
             try:
-                self._entries[normalize_icao(raw_icao)] = self._parse_entry(raw_entry)
+                entries[normalize_icao(raw_icao)] = self._parse_entry(raw_entry)
             except ValueError:
+                LOGGER.warning("Skipping invalid aircraft type entry %r in %s", raw_icao, self.path)
                 continue
+        self._entries = entries
+        return previous != self._entries
+
+    def refresh(self) -> bool:
+        fingerprint = self._file_fingerprint()
+        if fingerprint == self._fingerprint:
+            return False
+        return self.load()
+
+    def _file_fingerprint(self) -> tuple[int, int] | None:
+        if self.path is None:
+            return None
+        try:
+            stat = self.path.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
 
     def dump(self) -> dict[str, dict[str, str]]:
         return {icao: dict(entry) for icao, entry in sorted(self._entries.items())}
@@ -64,14 +88,17 @@ class AircraftTypeCatalog:
             encoding="utf-8",
         )
         temporary.replace(self.path)
+        self._fingerprint = self._file_fingerprint()
 
     def list(self) -> list[dict[str, str]]:
+        self.refresh()
         return [
             {"icao": icao.upper(), **entry}
             for icao, entry in sorted(self._entries.items())
         ]
 
     def lookup(self, icao: object) -> dict[str, str] | None:
+        self.refresh()
         try:
             entry = self._entries.get(normalize_icao(icao))
         except ValueError:
@@ -99,6 +126,7 @@ class AircraftTypeCatalog:
         return True
 
     def apply(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.refresh()
         if payload.get("type_code"):
             return payload
         entry = self.lookup(payload.get("icao"))

@@ -93,6 +93,7 @@
     window.setInterval(refreshHealth, 5000);
     window.setInterval(loadJournal, 1000);
     window.setInterval(loadCoverage, 5000);
+    window.setInterval(loadTypeCatalog, 5000);
   }
 
   function cacheElements() {
@@ -793,6 +794,7 @@
   }
 
   async function loadTypeCatalog() {
+    const previous = typeCatalogSignature();
     try {
       const payload = await fetchJson("/api/aircraft-types");
       state.typeCatalog = new Map(
@@ -802,8 +804,17 @@
       console.warn("Не удалось загрузить справочник типов ВС.", error);
       state.typeCatalog = new Map();
     }
+    if (typeCatalogSignature() === previous) return;
     renderTypeCatalog();
     renderAircraftList();
+  }
+
+  function typeCatalogSignature() {
+    return JSON.stringify(
+      [...state.typeCatalog.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([icao, entry]) => [icao, entry.type_code, entry.type_desc || ""]),
+    );
   }
 
   function renderTypeCatalog() {

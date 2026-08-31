@@ -290,6 +290,7 @@ async def _maintenance_loop(tracker: AircraftTracker, layers: LayerManager) -> N
     while True:
         await asyncio.sleep(5)
         await tracker.prune()
+        await tracker.refresh_manual_types()
         layer_refresh_tick += 1
         if layer_refresh_tick >= 6:
             layer_refresh_tick = 0

@@ -179,6 +179,16 @@ class AircraftTracker:
             if key in self._aircraft:
                 self._changed.add(key)
 
+    async def refresh_manual_types(self) -> None:
+        if self._type_catalog is None or not self._type_catalog.refresh():
+            return
+        async with self._lock:
+            for icao, state in self._aircraft.items():
+                if state.type_code:
+                    continue
+                if self._type_catalog.lookup(icao):
+                    self._changed.add(icao)
+
     def _export(self, state: AircraftState, include_track: bool = True) -> dict[str, Any]:
         payload = state.public_dict(include_track=include_track)
         if self._type_catalog:
