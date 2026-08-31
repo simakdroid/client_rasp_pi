@@ -732,7 +732,9 @@
     card.querySelector(".aircraft-card__type").textContent = formatAircraftType(aircraft);
     const lat = finite(aircraft.lat ?? aircraft.latitude);
     const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    card.querySelector('[data-metric="altitude"]').textContent = formatAltitude(aircraftAltitude(aircraft));
+    const altitude = aircraftAltitude(aircraft);
+    card.querySelector('[data-metric="altitude"]').textContent =
+      altitude === null ? "не определена" : formatAltitude(altitude);
     card.querySelector('[data-metric="speed"]').textContent = formatSpeed(aircraftSpeed(aircraft));
     card.querySelector('[data-metric="position"]').textContent =
       lat === null || lon === null ? "нет координат" : formatDistance(aircraftDistance(aircraft));
