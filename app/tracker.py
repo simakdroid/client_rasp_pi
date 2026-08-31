@@ -318,7 +318,13 @@ class AircraftTracker:
         )
         if not state.on_ground:
             self._coverage.observe(azimuth_deg, distance_m)
+        azimuth = round(azimuth_deg % 360, 1)
+        if azimuth == 360.0:
+            azimuth = 0.0
         distance_km = round(distance_m / 1000, 2)
+        if state.azimuth_deg != azimuth:
+            state.azimuth_deg = azimuth
+            changed = True
         if state.distance_km != distance_km:
             state.distance_km = distance_km
             changed = True

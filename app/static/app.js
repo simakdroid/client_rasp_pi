@@ -12,7 +12,8 @@
    * Элемент upsert может содержать track_append с новыми точками вместо полной
    * истории. Aircraft обязан содержать icao (или hex), lat, lon; остальные
    * используемые поля необязательны: callsign, altitude/alt_baro,
-   * speed/ground_speed, squawk, track/heading, distance, trail/positions
+   * speed/ground_speed, squawk, track/heading, distance, azimuth_deg,
+   * trail/positions
    * (массив точек [lat, lon] или {lat, lon}), type_code/t, type_desc/desc,
    * category, lost_at для архива.
    */
@@ -534,7 +535,7 @@
       ["Высота", formatAltitude(aircraftAltitude(aircraft))],
       ["Скорость", formatSpeed(aircraftSpeed(aircraft))],
       ["Код ответчика", text(aircraft.squawk)],
-      ["Дистанция", formatDistance(aircraftDistance(aircraft))],
+      ["Положение", formatPosition(aircraft)],
     ];
     if (text(aircraft.sector, "").trim()) {
       rows.push(["Сектор", aircraft.sector]);
@@ -749,14 +750,11 @@
     const typeNode = card.querySelector('[data-metric="type"]');
     typeNode.textContent = typeLabel || "не определён";
     typeNode.classList.toggle("is-unknown", !typeLabel);
-    const lat = finite(aircraft.lat ?? aircraft.latitude);
-    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     const altitude = aircraftAltitude(aircraft);
     card.querySelector('[data-metric="altitude"]').textContent =
       altitude === null ? "не определена" : formatAltitude(altitude);
     card.querySelector('[data-metric="speed"]').textContent = formatSpeed(aircraftSpeed(aircraft));
-    card.querySelector('[data-metric="position"]').textContent =
-      lat === null || lon === null ? "нет координат" : formatDistance(aircraftDistance(aircraft));
+    card.querySelector('[data-metric="position"]').textContent = formatPosition(aircraft);
     const squawk = text(aircraft.squawk, "").trim();
     card.querySelector('[data-metric="squawk"]').textContent = squawk || "—";
     card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
@@ -932,6 +930,15 @@
     return haversineKm(state.station.lat, state.station.lon, lat, lon);
   }
 
+  function aircraftAzimuth(aircraft) {
+    const explicit = finite(aircraft.azimuth_deg ?? aircraft.azimuth);
+    if (explicit !== null) return ((explicit % 360) + 360) % 360;
+    const lat = finite(aircraft.lat ?? aircraft.latitude);
+    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    if (!state.station || lat === null || lon === null) return null;
+    return initialBearingDeg(state.station.lat, state.station.lon, lat, lon);
+  }
+
   const EMITTER_TYPES = new Set([
     "ADSB_ICAO", "ADSB_ICAO_NT", "ADSB_OTHER",
     "ADSR_ICAO", "ADSR_OTHER",
@@ -1013,7 +1020,23 @@
 
   const formatAltitude = (value) => value === null ? "—" : `${Math.round(value).toLocaleString("ru-RU")} ft`;
   const formatSpeed = (value) => value === null ? "—" : `${Math.round(value)} kt`;
+  const formatAzimuth = (value) => {
+    if (value === null) return "";
+    const deg = ((Math.round(value) % 360) + 360) % 360;
+    return `${String(deg).padStart(3, "0")}°`;
+  };
   const formatDistance = (value) => value === null ? "—" : `${value < 10 ? value.toFixed(1) : Math.round(value)} км`;
+  function formatPosition(aircraft) {
+    const lat = finite(aircraft.lat ?? aircraft.latitude);
+    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    if (lat === null || lon === null) return "нет координат";
+    const parts = [];
+    const azimuth = formatAzimuth(aircraftAzimuth(aircraft));
+    const distance = aircraftDistance(aircraft);
+    if (azimuth) parts.push(azimuth);
+    if (distance !== null) parts.push(formatDistance(distance));
+    return parts.join(" · ") || "нет координат";
+  }
   const formatUtcTime = (value) => {
     const date = value instanceof Date ? value : new Date(value);
     if (!value || Number.isNaN(date.getTime())) return "—";
@@ -1042,6 +1065,16 @@
     const a = Math.sin(dLat / 2) ** 2 +
       Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
     return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function initialBearingDeg(lat1, lon1, lat2, lon2) {
+    const rad = Math.PI / 180;
+    const phi1 = lat1 * rad;
+    const phi2 = lat2 * rad;
+    const dLon = (lon2 - lon1) * rad;
+    const y = Math.sin(dLon) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+    return (Math.atan2(y, x) / rad + 360) % 360;
   }
 
   function connectAircraftSocket() {

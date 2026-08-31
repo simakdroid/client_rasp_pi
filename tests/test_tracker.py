@@ -39,6 +39,13 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
     assert "track" not in aircraft
     assert aircraft["calculated_track_deg"] is not None
     assert aircraft["distance_km"] > 0
+    from pyproj import Geod
+
+    azimuth, _, _ = Geod(ellps="WGS84").inv(37.0, 55.0, 37.2, 55.2)
+    expected = round(azimuth % 360, 1)
+    if expected == 360.0:
+        expected = 0.0
+    assert aircraft["azimuth_deg"] == expected
     snapshot = await tracker.snapshot()
     assert snapshot[0]["type_code"] == "B738"
     assert snapshot[0]["type_desc"] == "Boeing 737-800"
@@ -86,6 +93,9 @@ async def test_tracker_attaches_distance_to_mode_s(tmp_path) -> None:
     assert enriched[0]["callsign"] == "BAW123"
     assert enriched[0]["distance_km"] > 0
     assert "км" in enriched[0]["text"]
+    snapshot = await tracker.snapshot()
+    assert snapshot[0]["azimuth_deg"] is not None
+    assert 0 <= snapshot[0]["azimuth_deg"] < 360
 
 
 @pytest.mark.asyncio

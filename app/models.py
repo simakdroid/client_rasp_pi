@@ -59,6 +59,7 @@ class AircraftState:
     type_desc: str | None = None
     on_ground: bool | None = None
     distance_km: float | None = None
+    azimuth_deg: float | None = None
     geofences: set[str] = field(default_factory=set)
     sector: str | None = None
     track: list[Position] = field(default_factory=list)
@@ -83,6 +84,7 @@ class AircraftState:
             "type_desc": self.type_desc,
             "on_ground": self.on_ground,
             "distance_km": self.distance_km,
+            "azimuth_deg": self.azimuth_deg,
             "geofences": sorted(self.geofences),
             "sector": self.sector,
             "updated_at": self.updated_at.isoformat(),
