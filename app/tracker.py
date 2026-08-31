@@ -8,7 +8,7 @@ from typing import Any
 
 from pyproj import Geod
 
-from .aircraft_types import AircraftTypeCatalog
+from .aircraft_types import AircraftTypeCatalog, is_airframe_type_code
 from .coverage import CoverageRose
 from .gis import LayerManager
 from .mode_s import summary_text
@@ -184,13 +184,15 @@ class AircraftTracker:
             return
         async with self._lock:
             for icao, state in self._aircraft.items():
-                if state.type_code:
+                if is_airframe_type_code(state.type_code):
                     continue
                 if self._type_catalog.lookup(icao):
                     self._changed.add(icao)
 
     def _export(self, state: AircraftState, include_track: bool = True) -> dict[str, Any]:
         payload = state.public_dict(include_track=include_track)
+        if not is_airframe_type_code(payload.get("type_code")):
+            payload["type_code"] = None
         if self._type_catalog:
             self._type_catalog.apply(payload)
         return payload

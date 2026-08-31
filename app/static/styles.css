@@ -447,14 +447,8 @@ h1, h2, h3, p { margin: 0; }
   white-space: nowrap;
 }
 .aircraft-card__flight small { color: var(--muted); font-size: 10px; letter-spacing: .04em; }
-.aircraft-card__type {
-  overflow: hidden;
-  color: #9ee0ff;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.aircraft-card__type:empty { display: none; }
+.aircraft-card__type { color: #9ee0ff; }
+.aircraft-card__type.is-unknown { color: var(--muted); }
 .aircraft-card__metrics {
   display: grid;
   gap: 1px;
@@ -478,10 +472,8 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__squawk {
   color: #9ee0ff;
   font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
-  font-size: 11px;
   letter-spacing: .04em;
 }
-.aircraft-card__squawk:empty { display: none; }
 .aircraft-card__zones {
   overflow: hidden;
   color: var(--warning);

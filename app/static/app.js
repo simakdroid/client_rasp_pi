@@ -530,10 +530,10 @@
     grid.className = "tooltip-grid";
     const rows = [
       ["Рейс", text(aircraft.callsign, "без позывного")],
-      ["Тип ВС", formatAircraftType(aircraft) || "—"],
+      ["Тип ВС", formatAircraftType(aircraft) || "не определён"],
       ["Высота", formatAltitude(aircraftAltitude(aircraft))],
       ["Скорость", formatSpeed(aircraftSpeed(aircraft))],
-      ["Squawk", text(aircraft.squawk)],
+      ["Код ответчика", text(aircraft.squawk)],
       ["Дистанция", formatDistance(aircraftDistance(aircraft))],
     ];
     if (text(aircraft.sector, "").trim()) {
@@ -745,7 +745,10 @@
       aircraft.callsign, "без позывного",
     );
     card.querySelector(".aircraft-card__flight small").textContent = aircraft.icao;
-    card.querySelector(".aircraft-card__type").textContent = formatAircraftType(aircraft);
+    const typeLabel = formatAircraftType(aircraft);
+    const typeNode = card.querySelector('[data-metric="type"]');
+    typeNode.textContent = typeLabel || "не определён";
+    typeNode.classList.toggle("is-unknown", !typeLabel);
     const lat = finite(aircraft.lat ?? aircraft.latitude);
     const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     const altitude = aircraftAltitude(aircraft);
@@ -755,7 +758,7 @@
     card.querySelector('[data-metric="position"]').textContent =
       lat === null || lon === null ? "нет координат" : formatDistance(aircraftDistance(aircraft));
     const squawk = text(aircraft.squawk, "").trim();
-    card.querySelector(".aircraft-card__squawk").textContent = squawk ? `SQ ${squawk}` : "";
+    card.querySelector('[data-metric="squawk"]').textContent = squawk || "—";
     card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
     if (archived) {
       const lost = document.createElement("span");
@@ -929,6 +932,12 @@
     return haversineKm(state.station.lat, state.station.lon, lat, lon);
   }
 
+  const EMITTER_TYPES = new Set([
+    "ADSB_ICAO", "ADSB_ICAO_NT", "ADSB_OTHER",
+    "ADSR_ICAO", "ADSR_OTHER",
+    "TISB_ICAO", "TISB_OTHER", "TISB_TRACKFILE",
+    "MLAT", "MODE_S", "OTHER",
+  ]);
   const CATEGORY_LABELS = {
     A0: "Нет категории",
     A1: "Лёгкое",
@@ -955,14 +964,19 @@
     return state.typeCatalog.get(normalizeIcao(aircraft)) || null;
   }
 
+  function adsAircraftTypeCode(aircraft) {
+    const code = text(aircraft.type_code ?? aircraft.t, "").toUpperCase();
+    return code && !EMITTER_TYPES.has(code) ? code : "";
+  }
+
   function aircraftTypeCode(aircraft) {
-    const fromAds = text(aircraft.type_code ?? aircraft.t ?? aircraft.type, "").toUpperCase();
+    const fromAds = adsAircraftTypeCode(aircraft);
     if (fromAds) return fromAds;
     return text(catalogType(aircraft)?.type_code, "").toUpperCase();
   }
 
   function formatAircraftType(aircraft, compact = false) {
-    const fromAds = text(aircraft.type_code ?? aircraft.t ?? aircraft.type, "").toUpperCase();
+    const fromAds = adsAircraftTypeCode(aircraft);
     const catalog = catalogType(aircraft);
     const code = fromAds || text(catalog?.type_code, "").toUpperCase();
     const desc = fromAds

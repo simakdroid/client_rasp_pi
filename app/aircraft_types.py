@@ -10,6 +10,20 @@ LOGGER = logging.getLogger(__name__)
 
 ICAO_RE = re.compile(r"^[0-9a-f]{6}$")
 TYPE_CODE_RE = re.compile(r"^[A-Z0-9]{2,6}$")
+# readsb `type` is the reception class (mode_s, adsb_icao, …), not the airframe.
+EMITTER_TYPES = frozenset({
+    "ADSB_ICAO",
+    "ADSB_ICAO_NT",
+    "ADSB_OTHER",
+    "ADSR_ICAO",
+    "ADSR_OTHER",
+    "TISB_ICAO",
+    "TISB_OTHER",
+    "TISB_TRACKFILE",
+    "MLAT",
+    "MODE_S",
+    "OTHER",
+})
 
 
 def normalize_icao(value: object) -> str:
@@ -21,9 +35,14 @@ def normalize_icao(value: object) -> str:
 
 def normalize_type_code(value: object) -> str:
     code = str(value or "").strip().upper()
-    if not TYPE_CODE_RE.fullmatch(code):
+    if not TYPE_CODE_RE.fullmatch(code) or code in EMITTER_TYPES:
         raise ValueError("Aircraft type must be 2–6 characters")
     return code
+
+
+def is_airframe_type_code(value: object) -> bool:
+    code = str(value or "").strip().upper()
+    return bool(TYPE_CODE_RE.fullmatch(code) and code not in EMITTER_TYPES)
 
 
 class AircraftTypeCatalog:
@@ -127,8 +146,9 @@ class AircraftTypeCatalog:
 
     def apply(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.refresh()
-        if payload.get("type_code"):
+        if is_airframe_type_code(payload.get("type_code")):
             return payload
+        payload["type_code"] = None
         entry = self.lookup(payload.get("icao"))
         if not entry:
             return payload

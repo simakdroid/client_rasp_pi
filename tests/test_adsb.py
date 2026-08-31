@@ -30,6 +30,24 @@ def test_parse_readsb_aircraft() -> None:
     assert update.category == "A3"
 
 
+def test_parse_readsb_ignores_mode_s_emitter_type() -> None:
+    update = parse_readsb_aircraft(
+        {
+            "hex": "1558c4",
+            "flight": "SDM6223",
+            "type": "mode_s",
+            "alt_baro": 1475,
+            "squawk": "2144",
+            "seen": 0.5,
+        },
+        datetime(2026, 1, 1, tzinfo=UTC),
+        ttl_s=60,
+    )
+    assert update is not None
+    assert update.type_code is None
+    assert update.callsign == "SDM6223"
+
+
 def test_parse_stale_readsb_aircraft() -> None:
     assert (
         parse_readsb_aircraft(

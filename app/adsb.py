@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .aircraft_types import is_airframe_type_code
 from .models import AircraftUpdate
 
 LOGGER = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ def parse_readsb_aircraft(
         vertical_rate_fpm=_integer(raw.get("baro_rate", raw.get("geom_rate"))),
         squawk=_text(raw.get("squawk")),
         category=_text(raw.get("category")),
-        type_code=_type_code(raw.get("t") or raw.get("type")),
+        type_code=_type_code(raw.get("t")),
         type_desc=_text(raw.get("desc")),
         on_ground=altitude_raw == "ground",
         seen_s=seen,
@@ -153,7 +154,7 @@ def _type_code(value: object) -> str | None:
     if text is None:
         return None
     code = text.upper()
-    return code if 2 <= len(code) <= 6 else None
+    return code if is_airframe_type_code(code) else None
 
 
 def _number(value: object) -> float | None:
