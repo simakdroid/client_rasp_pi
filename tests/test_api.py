@@ -9,6 +9,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         layers_dir=tmp_path,
         readsb_json_path=tmp_path / "missing-aircraft.json",
         coverage_path=tmp_path / "coverage-rose.json",
+        aircraft_types_path=tmp_path / "aircraft-types.json",
     )
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
@@ -33,6 +34,10 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="archive-section"' in page
         assert 'id="aircraft-list"' in page
         assert 'id="archive-list"' in page
+        assert 'id="panel-types"' in page
+        assert 'data-tab="types"' in page
+        assert 'id="type-catalog-form"' in page
+        assert client.get("/api/aircraft-types").json()["types"] == []
         assert "pane-scroll" in page
         assert "aircraft-card__squawk" in page
         assert "aircraft-card__type" in page

@@ -13,8 +13,10 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from .adsb import AdsbSource, ReadsbJsonSource, SbsSource
+from .aircraft_types import AircraftTypeCatalog
 from .broadcast import BroadcastHub
 from .config import Settings, get_settings
+from .models import AircraftTypeInput
 from .diagnostics import read_adsb_status
 from .gis import LayerManager
 from .radio import RadioMonitor
@@ -27,6 +29,7 @@ LOGGER = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     layers = LayerManager(settings.layers_dir)
+    type_catalog = AircraftTypeCatalog(settings.aircraft_types_path)
     tracker = AircraftTracker(
         settings.station_lat,
         settings.station_lon,
@@ -38,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.archive_max_aircraft,
         settings.coverage_path,
         settings.coverage_max_km,
+        type_catalog,
     )
     hub = BroadcastHub()
     raw_messages = RawMessageLog(settings.raw_log_size)
@@ -82,12 +86,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tracker = tracker
     app.state.hub = hub
     app.state.raw_messages = raw_messages
+    app.state.type_catalog = type_catalog
 
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["*"],
         )
 
@@ -129,6 +134,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/coverage/reset")
     async def reset_coverage_rose() -> dict[str, object]:
         return await tracker.reset_coverage()
+
+    @app.get("/api/aircraft-types")
+    async def aircraft_types() -> dict[str, object]:
+        return {"types": type_catalog.list()}
+
+    @app.post("/api/aircraft-types")
+    async def upsert_aircraft_type(body: AircraftTypeInput) -> dict[str, object]:
+        try:
+            entry = type_catalog.upsert(body.icao, body.type_code, body.type_desc)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await tracker.mark_type_changed(entry["icao"])
+        return entry
+
+    @app.delete("/api/aircraft-types/{icao}")
+    async def delete_aircraft_type(icao: str) -> dict[str, object]:
+        try:
+            deleted = type_catalog.delete(icao)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Aircraft type not found")
+        await tracker.mark_type_changed(icao)
+        return {"ok": True}
 
     @app.get("/api/aircraft")
     async def aircraft() -> dict[str, object]:

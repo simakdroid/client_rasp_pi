@@ -45,6 +45,7 @@
     lastEventId: 0,
     rawMessages: [],
     lastRawId: 0,
+    typeCatalog: new Map(),
   };
 
   const el = {};
@@ -84,6 +85,7 @@
       loadLayers(),
       loadRadioChannels(),
       loadCoverage(),
+      loadTypeCatalog(),
     ]);
     connectAircraftSocket();
     void refreshHealth();
@@ -103,6 +105,8 @@
       "coverage-visible", "coverage-stats", "reset-coverage",
       "reload-layers", "reload-radio",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
+      "type-catalog-count", "type-catalog-form", "type-catalog-icao",
+      "type-catalog-type", "type-catalog-desc", "type-catalog-list",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -127,6 +131,17 @@
     el["reload-layers"].addEventListener("click", loadLayers);
     el["reload-radio"].addEventListener("click", loadRadioChannels);
     el["clear-journal"].addEventListener("click", clearJournal);
+    el["type-catalog-form"].addEventListener("submit", submitTypeCatalog);
+    el["type-catalog-icao"].addEventListener("input", () => {
+      el["type-catalog-icao"].value = el["type-catalog-icao"].value.toUpperCase();
+    });
+    el["type-catalog-type"].addEventListener("input", () => {
+      el["type-catalog-type"].value = el["type-catalog-type"].value.toUpperCase();
+    });
+    el["type-catalog-list"].addEventListener("click", (event) => {
+      const button = event.target.closest("[data-remove-icao]");
+      if (button) void removeTypeCatalogEntry(button.dataset.removeIcao);
+    });
     document.querySelectorAll("[data-journal-mode]").forEach((button) => {
       button.addEventListener("click", () => {
         state.journalMode = button.dataset.journalMode;
@@ -777,6 +792,93 @@
     renderArchiveList();
   }
 
+  async function loadTypeCatalog() {
+    try {
+      const payload = await fetchJson("/api/aircraft-types");
+      state.typeCatalog = new Map(
+        (payload.types || []).map((entry) => [text(entry.icao, "").toUpperCase(), entry]),
+      );
+    } catch (error) {
+      console.warn("Не удалось загрузить справочник типов ВС.", error);
+      state.typeCatalog = new Map();
+    }
+    renderTypeCatalog();
+    renderAircraftList();
+  }
+
+  function renderTypeCatalog() {
+    const items = [...state.typeCatalog.values()].sort((a, b) =>
+      text(a.icao, "").localeCompare(text(b.icao, "")),
+    );
+    el["type-catalog-count"].textContent = String(items.length);
+    if (!items.length) {
+      el["type-catalog-list"].replaceChildren(emptyNode("Нет ручных типов"));
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    items.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "type-catalog__item";
+      const icao = document.createElement("code");
+      icao.textContent = text(entry.icao, "").toUpperCase();
+      const type = document.createElement("strong");
+      const desc = text(entry.type_desc, "");
+      type.textContent = desc ? `${entry.type_code} · ${desc}` : entry.type_code;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.removeIcao = text(entry.icao, "").toUpperCase();
+      remove.textContent = "Удалить";
+      row.append(icao, type, remove);
+      fragment.append(row);
+    });
+    el["type-catalog-list"].replaceChildren(fragment);
+  }
+
+  async function submitTypeCatalog(event) {
+    event.preventDefault();
+    const icao = el["type-catalog-icao"].value.trim().toUpperCase();
+    const typeCode = el["type-catalog-type"].value.trim().toUpperCase();
+    const typeDesc = el["type-catalog-desc"].value.trim();
+    try {
+      const entry = await fetchJson("/api/aircraft-types", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          icao,
+          type_code: typeCode,
+          type_desc: typeDesc || null,
+        }),
+      });
+      state.typeCatalog.set(text(entry.icao, icao).toUpperCase(), entry);
+      el["type-catalog-form"].reset();
+      el["type-catalog-icao"].focus();
+      renderTypeCatalog();
+      renderAircraftList();
+    } catch (error) {
+      console.warn("Не удалось сохранить тип ВС.", error);
+    }
+  }
+
+  async function removeTypeCatalogEntry(icao) {
+    const key = text(icao, "").toUpperCase();
+    if (!key) return;
+    try {
+      const response = await fetch(`/api/aircraft-types/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      state.typeCatalog.delete(key);
+      renderTypeCatalog();
+      renderAircraftList();
+    } catch (error) {
+      console.warn("Не удалось удалить тип ВС.", error);
+    }
+  }
+
   function renderArchiveList() {
     const items = [...state.archived.values()]
       .filter(matchesSearch)
@@ -838,13 +940,23 @@
     C3: "Препятствие",
   };
 
+  function catalogType(aircraft) {
+    return state.typeCatalog.get(normalizeIcao(aircraft)) || null;
+  }
+
   function aircraftTypeCode(aircraft) {
-    return text(aircraft.type_code ?? aircraft.t ?? aircraft.type, "").toUpperCase();
+    const fromAds = text(aircraft.type_code ?? aircraft.t ?? aircraft.type, "").toUpperCase();
+    if (fromAds) return fromAds;
+    return text(catalogType(aircraft)?.type_code, "").toUpperCase();
   }
 
   function formatAircraftType(aircraft, compact = false) {
-    const code = aircraftTypeCode(aircraft);
-    const desc = text(aircraft.type_desc ?? aircraft.desc, "");
+    const fromAds = text(aircraft.type_code ?? aircraft.t ?? aircraft.type, "").toUpperCase();
+    const catalog = catalogType(aircraft);
+    const code = fromAds || text(catalog?.type_code, "").toUpperCase();
+    const desc = fromAds
+      ? text(aircraft.type_desc ?? aircraft.desc, "")
+      : text(catalog?.type_desc ?? aircraft.type_desc ?? aircraft.desc, "");
     if (code && desc && !compact) return `${code} · ${desc}`;
     if (code) return code;
     const category = text(aircraft.category, "").toUpperCase();
@@ -1335,10 +1447,11 @@
   }
 
   async function fetchJson(url, options = {}) {
+    const { headers: extraHeaders, ...rest } = options;
     const response = await fetch(url, {
-      headers: { Accept: "application/json" },
       cache: "no-store",
-      ...options,
+      ...rest,
+      headers: { Accept: "application/json", ...extraHeaders },
     });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const contentType = response.headers.get("content-type") || "";

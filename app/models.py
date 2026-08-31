@@ -18,6 +18,12 @@ class Position(BaseModel):
     altitude_ft: int | None = None
 
 
+class AircraftTypeInput(BaseModel):
+    icao: str
+    type_code: str
+    type_desc: str | None = None
+
+
 class AircraftUpdate(BaseModel):
     icao: str = Field(min_length=6, max_length=6)
     callsign: str | None = None

@@ -254,7 +254,8 @@ h1, h2, h3, p { margin: 0; }
   overflow: hidden;
 }
 #panel-journal.tab-panel,
-#panel-aircraft.tab-panel { overflow: hidden; }
+#panel-aircraft.tab-panel,
+#panel-types.tab-panel { overflow: hidden; }
 
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { font-size: 14px; }
@@ -511,6 +512,81 @@ h1, h2, h3, p { margin: 0; }
   min-height: 0;
 }
 
+#panel-types .panel-heading,
+#panel-types .type-catalog__hint,
+#panel-types .type-catalog__form { flex-shrink: 0; }
+.type-catalog__hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.type-catalog__form {
+  display: grid;
+  grid-template-columns: 5.2em 4.6em auto;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.type-catalog__desc { grid-column: 1 / -1; }
+.type-catalog__form input,
+.type-catalog__form button {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #071521;
+  color: var(--text);
+  font-size: 11px;
+}
+.type-catalog__form input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px #36b7ff22;
+}
+.type-catalog__form button {
+  width: auto;
+  background: #142b41;
+  color: var(--accent);
+  cursor: pointer;
+}
+.type-catalog__form button:hover { border-color: #2c6588; }
+.type-catalog__list {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+.type-catalog__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 11px;
+}
+.type-catalog__item code {
+  color: var(--muted);
+  font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  letter-spacing: .04em;
+}
+.type-catalog__item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.type-catalog__item button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 11px;
+}
+
 .layer-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .layer-group h3 { margin-bottom: 8px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
 .option, .radio-channel {
@@ -625,6 +701,7 @@ h1, h2, h3, p { margin: 0; }
   .sidebar { grid-row: 2; border-top: 1px solid var(--line); border-left: 0; }
   .tab-panel { padding: 10px; }
   .archive-section { min-height: 10rem; }
+  .type-catalog__form { grid-template-columns: 1fr 1fr auto; }
   .altitude-legend { width: 190px; bottom: 12px; }
 }
 

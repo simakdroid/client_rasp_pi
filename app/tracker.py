@@ -8,6 +8,7 @@ from typing import Any
 
 from pyproj import Geod
 
+from .aircraft_types import AircraftTypeCatalog
 from .coverage import CoverageRose
 from .gis import LayerManager
 from .mode_s import summary_text
@@ -29,6 +30,7 @@ class AircraftTracker:
         max_archive: int = 100,
         coverage_path: Path | None = None,
         max_coverage_km: float = 450,
+        type_catalog: AircraftTypeCatalog | None = None,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
@@ -49,6 +51,7 @@ class AircraftTracker:
         self._coverage = CoverageRose(
             station_lat, station_lon, coverage_path, max_coverage_km
         )
+        self._type_catalog = type_catalog
 
     async def apply(self, updates: list[AircraftUpdate]) -> None:
         async with self._lock:
@@ -107,14 +110,14 @@ class AircraftTracker:
     async def snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:
             return [
-                state.public_dict(include_track=True)
+                self._export(state, include_track=True)
                 for state in self._aircraft.values()
             ]
 
     async def archived_snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:
             return [
-                state.public_dict(include_track=False)
+                self._export(state, include_track=False)
                 for state in reversed(self._archive.values())
             ]
 
@@ -144,7 +147,7 @@ class AircraftTracker:
             for icao in self._changed:
                 if icao not in self._aircraft:
                     continue
-                item = self._aircraft[icao].public_dict(include_track=False)
+                item = self._export(self._aircraft[icao], include_track=False)
                 if points := self._track_appends.get(icao):
                     item["track_append"] = [
                         [point.lat, point.lon, point.altitude_ft, point.timestamp.isoformat()]
@@ -152,7 +155,7 @@ class AircraftTracker:
                     ]
                 changed.append(item)
             archived = [
-                self._archive[icao].public_dict(include_track=False)
+                self._export(self._archive[icao], include_track=False)
                 for icao in self._removed
                 if icao in self._archive
             ]
@@ -169,6 +172,18 @@ class AircraftTracker:
             self._archive_evicted.clear()
             self._track_appends.clear()
             return result
+
+    async def mark_type_changed(self, icao: str) -> None:
+        key = icao.strip().lower()
+        async with self._lock:
+            if key in self._aircraft:
+                self._changed.add(key)
+
+    def _export(self, state: AircraftState, include_track: bool = True) -> dict[str, Any]:
+        payload = state.public_dict(include_track=include_track)
+        if self._type_catalog:
+            self._type_catalog.apply(payload)
+        return payload
 
     def _store_archive(self, state: AircraftState, lost_at: datetime) -> None:
         if self.max_archive <= 0:
