@@ -15,7 +15,7 @@
    * speed/ground_speed, squawk, track/heading, distance, azimuth_deg,
    * trail/positions
    * (массив точек [lat, lon] или {lat, lon}), type_code/t, type_desc/desc,
-   * category, lost_at для архива.
+   * category, lost_at, started_at для архива.
    */
 
   const state = {
@@ -540,8 +540,9 @@
     if (text(aircraft.sector, "").trim()) {
       rows.push(["Сектор", aircraft.sector]);
     }
+    rows.push(["Время начала контакта", formatContactTime(contactStartedAt(aircraft))]);
     if (aircraft.lost_at) {
-      rows.push(["Статус", formatLostAt(aircraft.lost_at)]);
+      rows.push(["Время потери контакта", formatContactTime(aircraft.lost_at)]);
     }
     rows.forEach(([label, value]) => {
       const labelNode = document.createElement("span");
@@ -745,7 +746,8 @@
     card.querySelector(".aircraft-card__flight strong").textContent = text(
       aircraft.callsign, "без позывного",
     );
-    card.querySelector(".aircraft-card__flight small").textContent = aircraft.icao;
+    card.querySelector(".aircraft-card__flight small").textContent =
+      text(aircraft.icao, "").toUpperCase();
     const typeLabel = formatAircraftType(aircraft);
     const typeNode = card.querySelector('[data-metric="type"]');
     typeNode.textContent = typeLabel || "не определён";
@@ -757,13 +759,15 @@
     card.querySelector('[data-metric="position"]').textContent = formatPosition(aircraft);
     const squawk = text(aircraft.squawk, "").trim();
     card.querySelector('[data-metric="squawk"]').textContent = squawk || "—";
-    card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
+    card.querySelector('[data-metric="started"]').textContent =
+      formatContactTime(contactStartedAt(aircraft));
+    const lostRow = card.querySelector('[data-metric-row="lost"]');
     if (archived) {
-      const lost = document.createElement("span");
-      lost.className = "aircraft-card__lost";
-      lost.textContent = formatLostAt(aircraft.lost_at);
-      card.querySelector(".aircraft-card__body").append(lost);
+      lostRow.hidden = false;
+      card.querySelector('[data-metric="lost"]').textContent =
+        formatContactTime(aircraft.lost_at);
     }
+    card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
     card.addEventListener("click", () => selectAircraft(aircraft.icao));
     return card;
   }
@@ -1048,10 +1052,21 @@
       timeZone: "UTC",
     });
   };
-  const formatLostAt = (value) => {
+  const formatContactTime = (value) => {
     const time = formatUtcTime(value);
-    return time === "—" ? "пропал" : `пропал ${time} UTC`;
+    return time === "—" ? "—" : `${time} UTC`;
   };
+  function contactStartedAt(aircraft) {
+    const explicit = aircraft.started_at ?? aircraft.first_seen ?? aircraft.detected_at;
+    if (explicit) return explicit;
+    const track = aircraft.track ?? aircraft.trail ?? aircraft.positions ?? aircraft.track_history;
+    if (Array.isArray(track) && track.length) {
+      const first = track[0];
+      if (Array.isArray(first) && first[3]) return first[3];
+      if (first?.timestamp) return first.timestamp;
+    }
+    return aircraft.updated_at || null;
+  }
   const formatBlockAltitude = (value) => {
     if (value === null) return "---";
     const hundreds = String(Math.max(0, Math.round(value / 100))).padStart(3, "0");

@@ -49,6 +49,7 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
     snapshot = await tracker.snapshot()
     assert snapshot[0]["type_code"] == "B738"
     assert snapshot[0]["type_desc"] == "Boeing 737-800"
+    assert snapshot[0]["started_at"] is not None
 
     journal = await tracker.recent_events()
     assert len(journal["events"]) == 2
@@ -126,6 +127,8 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert archived[0]["status"] == "archived"
     assert archived[0]["squawk"] == "7700"
     assert archived[0]["lost_at"] is not None
+    assert archived[0]["started_at"] is not None
+    started_at = archived[0]["started_at"]
 
     delta = await tracker.consume_delta()
     assert delta is not None
@@ -138,4 +141,6 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     live = await tracker.snapshot()
     assert live[0]["status"] == "live"
     assert live[0]["squawk"] == "7700"
+    assert live[0]["started_at"] == started_at
+    assert live[0]["lost_at"] is None
     assert await tracker.archived_snapshot() == []

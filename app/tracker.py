@@ -221,8 +221,12 @@ class AircraftTracker:
         is_new = state is None
         if is_new:
             state = self._restore_archive(update.icao) or AircraftState(
-                icao=update.icao, updated_at=update.received_at
+                icao=update.icao,
+                updated_at=update.received_at,
+                started_at=update.received_at,
             )
+            if state.started_at is None:
+                state.started_at = update.received_at
             self._aircraft[update.icao] = state
 
         changed = is_new

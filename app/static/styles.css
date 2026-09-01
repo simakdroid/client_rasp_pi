@@ -405,9 +405,9 @@ h1, h2, h3, p { margin: 0; }
   position: relative;
   box-sizing: border-box;
   width: 100%;
-  height: 168px;
-  min-height: 168px;
-  max-height: 168px;
+  height: 184px;
+  min-height: 184px;
+  max-height: 184px;
   min-width: 0;
   flex-shrink: 0;
   display: grid;
@@ -437,7 +437,7 @@ h1, h2, h3, p { margin: 0; }
   min-width: 0;
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
 }
 .aircraft-card__flight strong {
@@ -446,7 +446,13 @@ h1, h2, h3, p { margin: 0; }
   font-size: 13px;
   white-space: nowrap;
 }
-.aircraft-card__flight small { color: var(--muted); font-size: 10px; letter-spacing: .04em; }
+.aircraft-card__flight small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  letter-spacing: .04em;
+}
 .aircraft-card__type { color: #9ee0ff; }
 .aircraft-card__type.is-unknown { color: var(--muted); }
 .aircraft-card__metrics {
@@ -699,7 +705,7 @@ h1, h2, h3, p { margin: 0; }
 
 @media (min-width: 1600px) {
   .workspace { grid-template-columns: minmax(0, 1fr) 420px; }
-  .aircraft-card { padding: 12px; height: 168px; min-height: 168px; max-height: 168px; }
+  .aircraft-card { padding: 12px; height: 184px; min-height: 184px; max-height: 184px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

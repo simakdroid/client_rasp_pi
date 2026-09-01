@@ -64,6 +64,7 @@ class AircraftState:
     sector: str | None = None
     track: list[Position] = field(default_factory=list)
     updated_at: datetime = field(default_factory=utc_now)
+    started_at: datetime | None = None
     lost_at: datetime | None = None
     revision: int = 0
 
@@ -88,6 +89,7 @@ class AircraftState:
             "geofences": sorted(self.geofences),
             "sector": self.sector,
             "updated_at": self.updated_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
             "lost_at": self.lost_at.isoformat() if self.lost_at else None,
             "status": "archived" if self.lost_at else "live",
             "revision": self.revision,
