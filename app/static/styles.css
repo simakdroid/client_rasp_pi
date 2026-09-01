@@ -454,7 +454,12 @@ h1, h2, h3, p { margin: 0; }
 .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px #36b7ff22; }
 .search input::placeholder { color: #60798e; }
 
-.aircraft-list, .radio-list { display: grid; align-content: start; gap: 6px; }
+.aircraft-list, .radio-list {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: min-content;
+  gap: 6px;
+}
 #panel-aircraft .panel-heading,
 #panel-aircraft .search { flex-shrink: 0; }
 #aircraft-list {
@@ -475,6 +480,7 @@ h1, h2, h3, p { margin: 0; }
   gap: 10px;
   padding: 11px;
   overflow: hidden;
+  min-height: min-content;
   border: 1px solid transparent;
   border-radius: 7px;
   background: var(--panel-2);
@@ -485,11 +491,11 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__color { border-radius: 4px; background: var(--aircraft-color, var(--accent)); }
 .aircraft-card__body {
   min-width: 0;
+  min-height: min-content;
   display: grid;
   align-content: start;
-  align-self: stretch;
+  align-self: start;
   gap: 5px;
-  overflow: hidden;
 }
 .aircraft-card__flight {
   min-width: 0;
