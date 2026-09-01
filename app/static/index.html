@@ -39,6 +39,8 @@
                   aria-pressed="true" aria-label="Показать или скрыть треки">⌁</button>
           <button id="toggle-coverage" class="icon-button is-active" type="button" title="Роза покрытия"
                   aria-pressed="true" aria-label="Показать или скрыть розу покрытия">◎</button>
+          <button id="toggle-sessions" class="icon-button" type="button" title="Треки записанных сессий"
+                  aria-pressed="false" aria-label="Показать или скрыть треки сессий">◌</button>
         </div>
         <div class="altitude-legend" aria-label="Легенда высоты">
           <span>Высота</span>
@@ -50,6 +52,7 @@
       <aside class="sidebar">
         <nav class="tabs" aria-label="Разделы панели">
           <button class="tab is-active" type="button" data-tab="aircraft">Борта</button>
+          <button class="tab" type="button" data-tab="sessions">Сессии</button>
           <button class="tab" type="button" data-tab="types">Типы</button>
           <button class="tab" type="button" data-tab="journal">Журнал</button>
           <button class="tab" type="button" data-tab="layers">Слои</button>
@@ -75,6 +78,21 @@
             </div>
             <div id="archive-list" class="aircraft-list pane-scroll" tabindex="0"></div>
           </section>
+        </section>
+
+        <section class="tab-panel" id="panel-sessions">
+          <div class="panel-heading">
+            <h2>Сессии</h2>
+            <span id="session-count">0</span>
+          </div>
+          <p class="session-hint" id="session-hint">Заходы за 7 суток пишутся на станции. Видны после выключения ноутбука. На карте — только треки.</p>
+          <label class="search">
+            <span class="sr-only">Поиск сессии</span>
+            <input id="session-search" type="search" placeholder="ICAO или позывной…" autocomplete="off">
+          </label>
+          <div id="session-list" class="session-list pane-scroll" tabindex="0">
+            <p class="empty-state">Нет записанных заходов</p>
+          </div>
         </section>
 
         <section class="tab-panel" id="panel-types">

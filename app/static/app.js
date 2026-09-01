@@ -37,6 +37,11 @@
     coverageVisible: true,
     coverageLayer: null,
     coverageRevision: -1,
+    sessions: [],
+    sessionTracks: new Map(),
+    sessionsVisible: false,
+    selectedSessionId: null,
+    sessionSearch: "",
     mapUserMoved: false,
     autoFitting: false,
     selectedIcao: null,
@@ -87,6 +92,7 @@
       loadRadioChannels(),
       loadCoverage(),
       loadTypeCatalog(),
+      loadSessions(),
     ]);
     connectAircraftSocket();
     void refreshHealth();
@@ -95,6 +101,7 @@
     window.setInterval(loadJournal, 1000);
     window.setInterval(loadCoverage, 5000);
     window.setInterval(loadTypeCatalog, 5000);
+    window.setInterval(loadSessions, 30000);
   }
 
   function cacheElements() {
@@ -103,12 +110,13 @@
       "visible-count", "aircraft-search", "aircraft-list",
       "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
-      "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-coverage",
+      "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-coverage", "toggle-sessions",
       "coverage-visible", "coverage-stats", "reset-coverage",
       "reload-layers", "reload-radio",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
       "type-catalog-count", "type-catalog-form", "type-catalog-icao",
       "type-catalog-type", "type-catalog-desc", "type-catalog-list",
+      "session-count", "session-search", "session-list", "session-hint",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -126,6 +134,15 @@
     el["fit-aircraft"].addEventListener("click", fitAircraft);
     el["toggle-tracks"].addEventListener("click", toggleTracks);
     el["toggle-coverage"].addEventListener("click", () => setCoverageVisible(!state.coverageVisible));
+    el["toggle-sessions"].addEventListener("click", () => setSessionsVisible(!state.sessionsVisible));
+    el["session-search"].addEventListener("input", (event) => {
+      state.sessionSearch = event.target.value.trim().toUpperCase();
+      renderSessionList();
+    });
+    el["session-list"].addEventListener("click", (event) => {
+      const button = event.target.closest("[data-session-id]");
+      if (button) selectSession(button.dataset.sessionId);
+    });
     el["coverage-visible"].addEventListener("change", () => {
       setCoverageVisible(el["coverage-visible"].checked);
     });
@@ -163,6 +180,10 @@
     document.querySelectorAll(".tab-panel").forEach((panel) => {
       panel.classList.toggle("is-active", panel.id === `panel-${name}`);
     });
+    if (name === "sessions") {
+      setSessionsVisible(true);
+      void loadSessions();
+    }
   }
 
   function tickClock() {
@@ -187,6 +208,11 @@
       station.name ?? state.config.station_name,
       "Локальная станция",
     );
+    const keepDays = finite(state.config.sessions?.keep_days) ?? 7;
+    if (el["session-hint"]) {
+      el["session-hint"].textContent =
+        `Заходы за ${keepDays} суток пишутся на станции. Видны после выключения ноутбука. На карте — только треки.`;
+    }
   }
 
   function createMap() {
@@ -204,6 +230,9 @@
     state.map.createPane("coverage");
     state.map.getPane("coverage").style.zIndex = 350;
     state.map.getPane("coverage").style.pointerEvents = "none";
+    state.map.createPane("sessions");
+    state.map.getPane("sessions").style.zIndex = 360;
+    state.map.getPane("sessions").style.pointerEvents = "auto";
     state.map.on("dragstart", () => {
       if (!state.autoFitting) state.mapUserMoved = true;
     });
@@ -611,6 +640,158 @@
     if (!state.coverageVisible && state.map.hasLayer(state.coverageLayer)) {
       state.map.removeLayer(state.coverageLayer);
     }
+  }
+
+  function setSessionsVisible(visible) {
+    state.sessionsVisible = Boolean(visible);
+    el["toggle-sessions"].classList.toggle("is-active", state.sessionsVisible);
+    el["toggle-sessions"].setAttribute("aria-pressed", String(state.sessionsVisible));
+    renderSessionTracks();
+  }
+
+  async function loadSessions() {
+    try {
+      const payload = await fetchJson("/api/sessions");
+      state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+      renderSessionList();
+      renderSessionTracks();
+    } catch (error) {
+      console.warn("Не удалось загрузить сессии.", error);
+      if (!state.sessions.length) renderSessionList();
+    }
+  }
+
+  function filteredSessions() {
+    return state.sessions.filter((session) => {
+      if (!state.sessionSearch) return true;
+      const haystack = [
+        session.icao, text(session.callsign, ""), text(session.type_code, ""),
+      ].join(" ").toUpperCase();
+      return haystack.includes(state.sessionSearch);
+    });
+  }
+
+  function renderSessionList() {
+    const items = filteredSessions();
+    el["session-count"].textContent = String(items.length);
+    if (!items.length) {
+      el["session-list"].replaceChildren(
+        emptyNode(state.sessionSearch && state.sessions.length ? "Ничего не найдено" : "Нет записанных заходов"),
+      );
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    items.forEach((session) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "session-item";
+      button.dataset.sessionId = session.id;
+      button.classList.toggle("is-selected", session.id === state.selectedSessionId);
+      const id = document.createElement("span");
+      id.className = "session-item__id";
+      const callsign = document.createElement("strong");
+      callsign.textContent = text(session.callsign, "без позывного");
+      const icao = document.createElement("small");
+      icao.textContent = text(session.icao, "").toUpperCase();
+      id.append(callsign, icao);
+      const time = document.createElement("span");
+      time.className = "session-item__time";
+      time.textContent = formatSessionRange(session);
+      button.append(id, time);
+      const typeLabel = [text(session.type_code, "").toUpperCase(), text(session.type_desc, "")]
+        .filter((part) => part && part !== "—")
+        .join(" · ");
+      if (typeLabel) {
+        const meta = document.createElement("span");
+        meta.className = "session-item__meta";
+        meta.textContent = typeLabel;
+        button.append(meta);
+      }
+      fragment.append(button);
+    });
+    el["session-list"].replaceChildren(fragment);
+  }
+
+  function formatSessionRange(session) {
+    const start = formatUtcTime(session.started_at);
+    const end = formatUtcTime(session.lost_at);
+    if (start === "—" && end === "—") return "—";
+    if (end === "—") return `${start} UTC`;
+    return `${start}–${end} UTC`;
+  }
+
+  function selectSession(sessionId) {
+    const session = state.sessions.find((item) => item.id === sessionId);
+    if (!session) return;
+    state.selectedSessionId = sessionId;
+    setSessionsVisible(true);
+    renderSessionList();
+    renderSessionTracks();
+    const points = normalizeTrail(session.track);
+    if (points.length && state.map) {
+      if (points.length === 1) state.map.setView(points[0], Math.max(state.map.getZoom(), 9));
+      else state.map.fitBounds(L.latLngBounds(points).pad(.18), { maxZoom: 11, animate: false });
+    }
+  }
+
+  function renderSessionTracks() {
+    if (!state.map) return;
+    const keep = new Set();
+    if (state.sessionsVisible) {
+      filteredSessions().forEach((session) => {
+        const points = normalizeTrail(session.track);
+        if (!points.length) return;
+        keep.add(session.id);
+        const selected = session.id === state.selectedSessionId;
+        const altitude = points.length ? aircraftAltitude(session) : null;
+        const last = session.track?.[session.track.length - 1];
+        const lastAlt = Array.isArray(last) ? finite(last[2]) : null;
+        const color = altitudeColor(lastAlt ?? altitude);
+        let layer = state.sessionTracks.get(session.id);
+        const options = {
+          pane: "sessions",
+          color,
+          weight: selected ? 4 : 2,
+          opacity: selected ? .95 : .45,
+        };
+        if (points.length === 1) {
+          if (layer && layer.getLatLng) {
+            layer.setLatLng(points[0]);
+            layer.setStyle?.({ color, opacity: options.opacity });
+          } else {
+            if (layer) state.map.removeLayer(layer);
+            layer = L.circleMarker(points[0], {
+              pane: "sessions",
+              radius: selected ? 6 : 4,
+              color,
+              weight: 2,
+              fillColor: color,
+              fillOpacity: selected ? .9 : .45,
+            });
+            layer.on("click", () => selectSession(session.id));
+            layer.addTo(state.map);
+            state.sessionTracks.set(session.id, layer);
+          }
+          return;
+        }
+        if (layer && layer.setLatLngs) {
+          layer.setLatLngs(points);
+          layer.setStyle(options);
+        } else {
+          if (layer) state.map.removeLayer(layer);
+          layer = L.polyline(points, options);
+          layer.on("click", () => selectSession(session.id));
+          layer.addTo(state.map);
+          state.sessionTracks.set(session.id, layer);
+        }
+      });
+    }
+    [...state.sessionTracks.keys()].forEach((id) => {
+      if (keep.has(id)) return;
+      const layer = state.sessionTracks.get(id);
+      if (layer) state.map.removeLayer(layer);
+      state.sessionTracks.delete(id);
+    });
   }
 
   async function loadCoverage() {

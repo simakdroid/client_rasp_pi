@@ -10,6 +10,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         readsb_json_path=tmp_path / "missing-aircraft.json",
         coverage_path=tmp_path / "coverage-rose.json",
         aircraft_types_path=tmp_path / "aircraft-types.json",
+        sessions_dir=tmp_path / "sessions",
     )
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
@@ -45,6 +46,10 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "aircraft-card__type" in page
         assert "Время записей — UTC" in page
         assert client.get("/api/aircraft").json()["archived"] == []
+        assert client.get("/api/sessions").json() == {"keep_days": 7, "sessions": []}
+        assert 'data-tab="sessions"' in page
+        assert 'id="panel-sessions"' in page
+        assert 'id="toggle-sessions"' in page
         coverage = client.get("/api/coverage").json()
         assert coverage["points"] == []
         assert coverage["samples"] == 0

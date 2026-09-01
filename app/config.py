@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     aircraft_types_path: Path = (
         Path(__file__).resolve().parent.parent / "data" / "aircraft-types.json"
     )
+    sessions_dir: Path = Path(__file__).resolve().parent.parent / "data" / "sessions"
+    sessions_keep_days: int = Field(default=7, ge=1, le=90)
 
     websocket_interval_s: float = Field(default=0.75, ge=0.2, le=5)
     layers_dir: Path = Path(__file__).resolve().parent.parent / "data" / "layers"

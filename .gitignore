@@ -11,3 +11,4 @@ __pycache__/
 !/data/layers/example-sector.geojson
 /data/coverage-rose.json
 /data/aircraft-types.json
+/data/sessions/

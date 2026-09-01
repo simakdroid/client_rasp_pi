@@ -238,9 +238,9 @@ h1, h2, h3, p { margin: 0; }
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: .05em;
+  letter-spacing: .04em;
 }
 .tab:hover, .tab.is-active { color: var(--text); border-bottom-color: var(--accent); background: #102136; }
 
@@ -255,6 +255,7 @@ h1, h2, h3, p { margin: 0; }
 }
 #panel-journal.tab-panel,
 #panel-aircraft.tab-panel,
+#panel-sessions.tab-panel,
 #panel-types.tab-panel { overflow: hidden; }
 
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -306,6 +307,66 @@ h1, h2, h3, p { margin: 0; }
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
+}
+.session-hint {
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.session-list {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+.session-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--panel-2);
+  text-align: left;
+  cursor: pointer;
+}
+.session-item:hover, .session-item.is-selected { border-color: #2c6588; background: #142b41; }
+.session-item__id {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.session-item__id strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.session-item__id small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  letter-spacing: .04em;
+}
+.session-item__time {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.session-item__meta {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: #9ee0ff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .journal-list {
   flex: 1 1 0;
@@ -405,16 +466,14 @@ h1, h2, h3, p { margin: 0; }
   position: relative;
   box-sizing: border-box;
   width: 100%;
-  height: 184px;
-  min-height: 184px;
-  max-height: 184px;
+  height: auto;
   min-width: 0;
   flex-shrink: 0;
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr);
   align-items: stretch;
   gap: 10px;
-  padding: 10px;
+  padding: 11px;
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -426,11 +485,10 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__color { border-radius: 4px; background: var(--aircraft-color, var(--accent)); }
 .aircraft-card__body {
   min-width: 0;
-  height: 100%;
   display: grid;
   align-content: start;
   align-self: stretch;
-  gap: 3px;
+  gap: 5px;
   overflow: hidden;
 }
 .aircraft-card__flight {
@@ -443,13 +501,13 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__flight strong {
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: 15px;
   white-space: nowrap;
 }
 .aircraft-card__flight small {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
   letter-spacing: .04em;
 }
@@ -457,10 +515,10 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__type.is-unknown { color: var(--muted); }
 .aircraft-card__metrics {
   display: grid;
-  gap: 1px;
+  gap: 3px;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.25;
+  font-size: 13px;
+  line-height: 1.35;
 }
 .aircraft-card__metric {
   display: grid;
@@ -483,13 +541,13 @@ h1, h2, h3, p { margin: 0; }
 .aircraft-card__zones {
   overflow: hidden;
   color: var(--warning);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .aircraft-card__zones:empty { display: none; }
 .aircraft-card.is-archived { opacity: .78; }
-.aircraft-card__lost { color: var(--muted); font-size: 10px; }
+.aircraft-card__lost { color: var(--muted); font-size: 12px; }
 
 .archive-section {
   flex: 0 0 42%;
@@ -705,7 +763,7 @@ h1, h2, h3, p { margin: 0; }
 
 @media (min-width: 1600px) {
   .workspace { grid-template-columns: minmax(0, 1fr) 420px; }
-  .aircraft-card { padding: 12px; height: 184px; min-height: 184px; max-height: 184px; }
+  .aircraft-card { padding: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

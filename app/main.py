@@ -21,6 +21,7 @@ from .diagnostics import read_adsb_status
 from .gis import LayerManager
 from .radio import RadioMonitor
 from .raw_messages import RawMessageLog, ingest_raw_messages
+from .sessions import SessionLog
 from .tracker import AircraftTracker
 
 LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     layers = LayerManager(settings.layers_dir)
     type_catalog = AircraftTypeCatalog(settings.aircraft_types_path)
+    session_log = SessionLog(settings.sessions_dir, settings.sessions_keep_days)
     tracker = AircraftTracker(
         settings.station_lat,
         settings.station_lon,
@@ -42,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.coverage_path,
         settings.coverage_max_km,
         type_catalog,
+        session_log,
     )
     hub = BroadcastHub()
     raw_messages = RawMessageLog(settings.raw_log_size)
@@ -79,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await tracker.flush_coverage()
+            await tracker.flush_sessions()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -87,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.hub = hub
     app.state.raw_messages = raw_messages
     app.state.type_catalog = type_catalog
+    app.state.session_log = session_log
 
     if settings.cors_origins:
         app.add_middleware(
@@ -125,6 +130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else bool(settings.radio_channels)
             },
             "websocket_interval_ms": round(settings.websocket_interval_s * 1000),
+            "sessions": {"keep_days": settings.sessions_keep_days},
         }
 
     @app.get("/api/coverage")
@@ -158,6 +164,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Aircraft type not found")
         await tracker.mark_type_changed(icao)
         return {"ok": True}
+
+    @app.get("/api/sessions")
+    async def sessions() -> dict[str, object]:
+        return {
+            "keep_days": settings.sessions_keep_days,
+            "sessions": await asyncio.to_thread(session_log.list),
+        }
 
     @app.get("/api/aircraft")
     async def aircraft() -> dict[str, object]:

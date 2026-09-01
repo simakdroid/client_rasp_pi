@@ -13,6 +13,7 @@ from .coverage import CoverageRose
 from .gis import LayerManager
 from .mode_s import summary_text
 from .models import AircraftState, AircraftUpdate, Position
+from .sessions import SessionLog
 
 GEOD = Geod(ellps="WGS84")
 
@@ -31,6 +32,7 @@ class AircraftTracker:
         coverage_path: Path | None = None,
         max_coverage_km: float = 450,
         type_catalog: AircraftTypeCatalog | None = None,
+        session_log: SessionLog | None = None,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
@@ -52,6 +54,7 @@ class AircraftTracker:
             station_lat, station_lon, coverage_path, max_coverage_km
         )
         self._type_catalog = type_catalog
+        self._sessions = session_log
 
     async def apply(self, updates: list[AircraftUpdate]) -> None:
         async with self._lock:
@@ -61,6 +64,7 @@ class AircraftTracker:
     async def prune(self) -> None:
         threshold = datetime.now(UTC) - self.ttl
         now = datetime.now(UTC)
+        recorded: list[dict[str, Any]] = []
         async with self._lock:
             expired = [
                 icao for icao, state in self._aircraft.items() if state.updated_at < threshold
@@ -72,6 +76,10 @@ class AircraftTracker:
                 self._removed.add(icao)
                 self._append_event(state, "lost", now)
                 self._store_archive(state, now)
+                if payload := self._session_payload(state, now):
+                    recorded.append(payload)
+        if recorded and self._sessions:
+            await asyncio.to_thread(self._sessions.record_many, recorded)
 
     async def coverage_snapshot(self) -> dict[str, Any]:
         async with self._lock:
@@ -86,6 +94,18 @@ class AircraftTracker:
     async def flush_coverage(self) -> None:
         async with self._lock:
             self._coverage.flush()
+
+    async def flush_sessions(self) -> None:
+        if self._sessions is None:
+            return
+        now = datetime.now(UTC)
+        recorded: list[dict[str, Any]] = []
+        async with self._lock:
+            for state in self._aircraft.values():
+                if payload := self._session_payload(state, now):
+                    recorded.append(payload)
+        if recorded:
+            await asyncio.to_thread(self._sessions.record_many, recorded)
 
     async def attach_mode_s_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         async with self._lock:
@@ -196,6 +216,33 @@ class AircraftTracker:
         if self._type_catalog:
             self._type_catalog.apply(payload)
         return payload
+
+    def _session_payload(
+        self, state: AircraftState, lost_at: datetime
+    ) -> dict[str, Any] | None:
+        if not state.track and (state.lat is None or state.lon is None):
+            return None
+        exported = self._export(state, include_track=True)
+        started = state.started_at
+        if started is None and state.track:
+            started = state.track[0].timestamp
+        if started is None:
+            started = state.updated_at
+        track = exported.get("track") or []
+        if not track and state.lat is not None and state.lon is not None:
+            track = [
+                [state.lat, state.lon, state.altitude_ft, lost_at.isoformat()]
+            ]
+        return {
+            "id": f"{state.icao}-{started.strftime('%Y%m%dT%H%M%S')}",
+            "icao": state.icao,
+            "callsign": exported.get("callsign"),
+            "type_code": exported.get("type_code"),
+            "type_desc": exported.get("type_desc"),
+            "started_at": started.isoformat(),
+            "lost_at": lost_at.isoformat(),
+            "track": track,
+        }
 
     def _store_archive(self, state: AircraftState, lost_at: datetime) -> None:
         if self.max_archive <= 0:

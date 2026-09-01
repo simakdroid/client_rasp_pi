@@ -65,6 +65,7 @@ def test_aircraft_types_api(tmp_path) -> None:
         readsb_json_path=tmp_path / "missing-aircraft.json",
         coverage_path=tmp_path / "coverage-rose.json",
         aircraft_types_path=tmp_path / "aircraft-types.json",
+        sessions_dir=tmp_path / "sessions",
     )
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/aircraft-types").json()["types"] == []
