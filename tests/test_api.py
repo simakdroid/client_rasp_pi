@@ -28,8 +28,8 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="receiver-card"' not in page
         assert 'id="clock"' in page
         assert "aircraft-card__flight" in page
-        assert "Время начала контакта" in page
-        assert "Время потери контакта" in page
+        assert "Начало контакта" in page
+        assert "Потеря контакта" in page
         assert 'id="panel-journal"' in page
         assert 'data-journal-mode="raw"' in page
         assert 'id="journal-list"' in page

@@ -569,9 +569,9 @@
     if (text(aircraft.sector, "").trim()) {
       rows.push(["Сектор", aircraft.sector]);
     }
-    rows.push(["Время начала контакта", formatContactTime(contactStartedAt(aircraft))]);
+    rows.push(["Начало контакта", formatContactTime(contactStartedAt(aircraft))]);
     if (aircraft.lost_at) {
-      rows.push(["Время потери контакта", formatContactTime(aircraft.lost_at)]);
+      rows.push(["Потеря контакта", formatContactTime(aircraft.lost_at)]);
     }
     rows.forEach(([label, value]) => {
       const labelNode = document.createElement("span");

@@ -533,19 +533,11 @@ h1, h2, h3, p { margin: 0; }
   gap: 8px;
   min-width: 0;
 }
-.aircraft-card__metric--time {
-  grid-template-columns: 1fr;
-  gap: 1px;
-}
 .aircraft-card__metric-label { color: var(--muted); }
 .aircraft-card__metric-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.aircraft-card__metric--time .aircraft-card__metric-value {
-  overflow: visible;
-  font-variant-numeric: tabular-nums;
 }
 .aircraft-card__squawk {
   color: #9ee0ff;
