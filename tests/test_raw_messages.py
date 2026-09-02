@@ -34,3 +34,11 @@ async def test_raw_message_log_is_incremental_and_bounded() -> None:
     )
     assert older["messages"][0]["raw"] == "*8D4840D6202CC371C32CE0576098;"
     assert older["has_more"] is False
+    cleared = await message_log.clear()
+    assert cleared["ok"] is True
+    assert cleared["last_id"] == 3
+    assert (await message_log.recent())["messages"] == []
+    await message_log.append("*8D40621D58C382D690C8AC2863A7;")
+    after_clear = await message_log.recent()
+    assert len(after_clear["messages"]) == 1
+    assert after_clear["last_id"] == 4

@@ -1387,10 +1387,24 @@
     return existing.concat(incoming.filter((item) => !knownIds.has(item.id))).slice(-JOURNAL_LIMIT);
   }
 
-  function clearJournal() {
-    if (state.journalMode === "raw") state.rawMessages = [];
-    else state.journalEvents = [];
-    renderJournal();
+  async function clearJournal() {
+    const rawMode = state.journalMode === "raw";
+    try {
+      const payload = await fetchJson(
+        rawMode ? "/api/adsb/raw/clear" : "/api/adsb/messages/clear",
+        { method: "POST" },
+      );
+      if (rawMode) {
+        state.rawMessages = [];
+        state.lastRawId = finite(payload.last_id) ?? state.lastRawId;
+      } else {
+        state.journalEvents = [];
+        state.lastEventId = finite(payload.last_id) ?? state.lastEventId;
+      }
+      renderJournal();
+    } catch (error) {
+      console.warn("Не удалось очистить журнал на станции:", error);
+    }
   }
 
   async function loadDecodedMessages() {
@@ -1456,8 +1470,8 @@
     const previousTop = list.scrollTop;
     el["journal-count"].textContent = String(items.length);
     el["journal-hint"].textContent = rawMode
-      ? "Кадры Mode-S с порта readsb 30002: тип DF, ICAO, высота/squawk, дальность если борт уже декодирован. Время — UTC."
-      : "Изменения декодированных данных бортов. Время записей — UTC.";
+      ? "Кадры Mode-S с порта readsb 30002: тип DF, ICAO, высота/squawk, дальность если борт уже декодирован. Время — UTC. «Очистить» стирает журнал на станции."
+      : "Изменения декодированных данных бортов. Время записей — UTC. «Очистить» стирает журнал на станции.";
     if (!items.length) {
       list.replaceChildren(
         emptyNode(

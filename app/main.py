@@ -195,6 +195,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             newest_first=newest_first,
         )
 
+    @app.post("/api/adsb/messages/clear")
+    async def clear_adsb_messages() -> dict[str, object]:
+        return await tracker.clear_events()
+
     @app.get("/api/adsb/raw")
     async def adsb_raw_messages(
         after_id: int = Query(default=0, ge=0),
@@ -210,6 +214,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         payload["messages"] = await tracker.attach_mode_s_context(payload["messages"])
         return payload
+
+    @app.post("/api/adsb/raw/clear")
+    async def clear_adsb_raw_messages() -> dict[str, object]:
+        return await raw_messages.clear()
 
     @app.get("/api/layers")
     async def layer_list() -> list[dict[str, object]]:

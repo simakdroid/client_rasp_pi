@@ -19,6 +19,8 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert client.get("/api/aircraft").json()["aircraft"] == []
         assert client.get("/api/adsb/messages").json()["events"] == []
         assert client.get("/api/adsb/raw").json()["messages"] == []
+        assert client.post("/api/adsb/messages/clear").json() == {"ok": True, "last_id": 0}
+        assert client.post("/api/adsb/raw/clear").json() == {"ok": True, "last_id": 0}
         paged = client.get("/api/adsb/messages", params={"newest_first": True, "limit": 1})
         assert paged.status_code == 200
         assert paged.json()["has_more"] is False

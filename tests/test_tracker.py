@@ -65,6 +65,23 @@ async def test_tracker_builds_track_and_delta(tmp_path) -> None:
     )
     assert older["events"][0]["kind"] == "detected"
     assert older["has_more"] is False
+    cleared = await tracker.clear_events()
+    assert cleared["ok"] is True
+    assert cleared["last_id"] == journal["last_id"]
+    assert (await tracker.recent_events())["events"] == []
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.3,
+                lon=37.3,
+                received_at=timestamp + timedelta(seconds=60),
+            )
+        ]
+    )
+    after_clear = await tracker.recent_events()
+    assert len(after_clear["events"]) == 1
+    assert after_clear["events"][0]["id"] > journal["last_id"]
     coverage = await tracker.coverage_snapshot()
     assert coverage["samples"] >= 1
     assert coverage["filled_bins"] >= 1

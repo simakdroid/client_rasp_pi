@@ -159,6 +159,11 @@ class AircraftTracker:
                 newest_first=newest_first,
             )
 
+    async def clear_events(self) -> dict[str, Any]:
+        async with self._lock:
+            self._events.clear()
+            return {"ok": True, "last_id": self._event_sequence}
+
     async def consume_delta(self) -> dict[str, Any] | None:
         async with self._lock:
             if not self._changed and not self._removed:

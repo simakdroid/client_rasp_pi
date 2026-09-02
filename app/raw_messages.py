@@ -65,6 +65,11 @@ class RawMessageLog:
                 "has_more": len(filtered) > limit,
             }
 
+    async def clear(self) -> dict[str, Any]:
+        async with self._lock:
+            self._messages.clear()
+            return {"ok": True, "last_id": self._sequence}
+
 
 async def ingest_raw_messages(host: str, port: int, message_log: RawMessageLog) -> None:
     delay = 1.0
