@@ -12,3 +12,4 @@ __pycache__/
 /data/coverage-rose.json
 /data/aircraft-types.json
 /data/sessions/
+/data/raw-capture/

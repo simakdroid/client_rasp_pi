@@ -20,6 +20,7 @@ from .models import AircraftTypeInput
 from .diagnostics import read_adsb_status
 from .gis import LayerManager
 from .radio import RadioMonitor
+from .raw_capture import RawCapture
 from .raw_messages import RawMessageLog, ingest_raw_messages
 from .sessions import SessionLog
 from .tracker import AircraftTracker
@@ -47,7 +48,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session_log,
     )
     hub = BroadcastHub()
-    raw_messages = RawMessageLog(settings.raw_log_size)
+    raw_capture = RawCapture(
+        settings.raw_capture_dir, settings.raw_capture_keep_days
+    )
+    raw_messages = RawMessageLog(settings.raw_log_size, raw_capture)
     radio = RadioMonitor(
         settings.radio_channels,
         settings.radio_stats_path,
@@ -90,6 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tracker = tracker
     app.state.hub = hub
     app.state.raw_messages = raw_messages
+    app.state.raw_capture = raw_capture
     app.state.type_catalog = type_catalog
     app.state.session_log = session_log
 
@@ -109,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "adsb": await asyncio.to_thread(
                 read_adsb_status, settings.readsb_json_path
             ),
+            "raw_capture": raw_capture.status(),
         }
 
     @app.get("/api/config")
@@ -131,6 +137,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "websocket_interval_ms": round(settings.websocket_interval_s * 1000),
             "sessions": {"keep_days": settings.sessions_keep_days},
+            "raw_capture": {
+                "enabled": settings.raw_capture_dir is not None,
+                "keep_days": settings.raw_capture_keep_days,
+            },
         }
 
     @app.get("/api/coverage")

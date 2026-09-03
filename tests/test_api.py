@@ -16,6 +16,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["adsb"]["status"] == "unavailable"
+        assert health.json()["raw_capture"] == {"enabled": False}
         assert client.get("/api/aircraft").json()["aircraft"] == []
         assert client.get("/api/adsb/messages").json()["events"] == []
         assert client.get("/api/adsb/raw").json()["messages"] == []

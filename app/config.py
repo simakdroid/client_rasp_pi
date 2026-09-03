@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     raw_host: str = "127.0.0.1"
     raw_port: int = Field(default=30002, ge=1, le=65535)
     raw_log_size: int = Field(default=1000, ge=10, le=50000)
+    raw_capture_dir: Path | None = None
+    raw_capture_keep_days: int = Field(default=3, ge=1, le=90)
     adsb_poll_interval_s: float = Field(default=0.75, ge=0.2, le=10)
     aircraft_ttl_s: int = Field(default=60, ge=5, le=3600)
     track_max_points: int = Field(default=300, ge=2, le=5000)
