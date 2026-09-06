@@ -255,7 +255,6 @@ h1, h2, h3, p { margin: 0; }
 }
 #panel-journal.tab-panel,
 #panel-aircraft.tab-panel,
-#panel-sessions.tab-panel,
 #panel-types.tab-panel { overflow: hidden; }
 
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -307,66 +306,6 @@ h1, h2, h3, p { margin: 0; }
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
-}
-.session-hint {
-  margin: 4px 0 10px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.45;
-}
-.session-list {
-  flex: 1 1 0;
-  height: 0;
-  min-height: 0;
-  display: grid;
-  align-content: start;
-  gap: 6px;
-}
-.session-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: var(--panel-2);
-  text-align: left;
-  cursor: pointer;
-}
-.session-item:hover, .session-item.is-selected { border-color: #2c6588; background: #142b41; }
-.session-item__id {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.session-item__id strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.session-item__id small {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 10px;
-  font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
-  letter-spacing: .04em;
-}
-.session-item__time {
-  color: var(--muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.session-item__meta {
-  grid-column: 1 / -1;
-  overflow: hidden;
-  color: #9ee0ff;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .journal-list {
   flex: 1 1 0;
