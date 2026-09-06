@@ -1501,8 +1501,18 @@
           icao || (event.df != null ? `DF${event.df}` : "сырой кадр"),
           callsign,
         ].filter(Boolean).join(" ");
-        const details = document.createElement("p");
-        details.textContent = text(event.text, text(event.df_label, "Mode-S"));
+        const details = document.createElement("dl");
+        details.className = "journal-entry__fields";
+        rawJournalRows(event).forEach(([name, value]) => {
+          const row = document.createElement("div");
+          row.className = "journal-entry__row";
+          const dt = document.createElement("dt");
+          dt.textContent = name;
+          const dd = document.createElement("dd");
+          dd.textContent = value;
+          row.append(dt, dd);
+          details.append(row);
+        });
         const code = document.createElement("code");
         code.textContent = text(event.raw, "—");
         entry.append(timestamp, label, details, code);
@@ -1522,6 +1532,35 @@
     list.replaceChildren(fragment);
     if (stickToNewest) list.scrollTop = 0;
     else list.scrollTop = previousTop + (list.scrollHeight - previousHeight);
+  }
+
+  function rawJournalRows(event) {
+    const rows = [];
+    const add = (name, value) => {
+      if (value === null || value === undefined || value === "") return;
+      rows.push([name, String(value)]);
+    };
+    const acas = event.acas_vs != null || event.acas_ra != null;
+    add("Тип", event.df_label || (event.df != null ? `DF${event.df}` : "сырой кадр"));
+    if (event.altitude_ft != null) add("Высота", `${event.altitude_ft} ft`);
+    else if (acas) add("Высота", "нет данных");
+    if (event.squawk) add("Код ответчика", `A${event.squawk}`);
+    add("VS", event.acas_vs);
+    add("SL", event.acas_sl);
+    add("RI", event.acas_ri);
+    if (event.df === 0) add("CC", event.acas_cc);
+    add("RA", event.acas_ra);
+    add("RAC", event.acas_rac);
+    add("RAT", event.acas_rat);
+    add("Угроза", event.acas_threat);
+    const distance = finite(event.distance_km);
+    if (distance != null) {
+      add("Дальность", distance < 10 ? `${distance.toFixed(1)} км` : `${Math.round(distance)} км`);
+    }
+    if (rows.length <= 1 && event.text) {
+      String(event.text).split(" · ").slice(1).forEach((part) => add("Данные", part));
+    }
+    return rows;
   }
 
   async function loadLayers() {

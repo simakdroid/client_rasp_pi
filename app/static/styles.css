@@ -428,6 +428,29 @@ h1, h2, h3, p { margin: 0; }
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+.journal-entry__fields {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 2px 0;
+  margin: 0;
+}
+.journal-entry__row {
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr);
+  gap: 0 8px;
+  align-items: start;
+}
+.journal-entry__row dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.journal-entry__row dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .journal-entry.is-raw {
   border-left-color: var(--warning);
 }
