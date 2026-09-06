@@ -8,18 +8,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .mode_s import decode_avr
-from .raw_capture import RawCapture
 
 LOGGER = logging.getLogger(__name__)
 HEX_DIGITS = frozenset("0123456789ABCDEF")
 
 
 class RawMessageLog:
-    def __init__(
-        self, max_messages: int = 1000, capture: RawCapture | None = None
-    ) -> None:
+    def __init__(self, max_messages: int = 1000) -> None:
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
-        self._capture = capture
         self._sequence = 0
         self._lock = asyncio.Lock()
 
@@ -33,8 +29,6 @@ class RawMessageLog:
             }
             entry.update(decode_avr(raw))
             self._messages.append(entry)
-        if self._capture is not None:
-            await asyncio.to_thread(self._capture.append, entry)
 
     async def recent(
         self,
