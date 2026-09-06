@@ -27,7 +27,7 @@ class RawMessageLog:
                 "timestamp": datetime.now(UTC).isoformat(),
                 "raw": raw,
             }
-            entry.update(decode_avr(raw))
+            entry.update(decode_raw_line(raw))
             self._messages.append(entry)
 
     async def recent(
@@ -80,7 +80,7 @@ async def ingest_raw_messages(host: str, port: int, message_log: RawMessageLog) 
             LOGGER.info("Connected to readsb raw output at %s:%s", host, port)
             delay = 1.0
             while line := await reader.readline():
-                if raw := normalize_avr_message(line.decode("ascii", errors="ignore")):
+                if raw := normalize_raw_line(line.decode("latin-1", errors="replace")):
                     await message_log.append(raw)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30.0)
@@ -97,14 +97,40 @@ async def ingest_raw_messages(host: str, port: int, message_log: RawMessageLog) 
                     await writer.wait_closed()
 
 
+def normalize_raw_line(line: str) -> str | None:
+    raw = line.strip()
+    return raw or None
+
+
 def normalize_avr_message(line: str) -> str | None:
-    raw = line.strip().upper()
-    if len(raw) < 16 or raw[-1:] != ";" or raw[:1] not in {"*", "@"}:
-        return None
-    body = raw[1:-1]
-    if not body or any(character not in HEX_DIGITS for character in body):
-        return None
-    payload_length = len(body) if raw[0] == "*" else len(body) - 12
-    if payload_length not in {14, 28}:
-        return None
-    return raw
+    return normalize_raw_line(line)
+
+
+def decode_raw_line(raw: str) -> dict[str, Any]:
+    if _is_avr_candidate(raw):
+        try:
+            return decode_avr(raw)
+        except (ValueError, IndexError, TypeError):
+            pass
+    return {
+        "df": None,
+        "df_label": "сырой кадр",
+        "icao": None,
+        "callsign": None,
+        "altitude_ft": None,
+        "squawk": None,
+        "adsb_type": None,
+        "text": "Кадр без разбора Mode-S",
+    }
+
+
+def _is_avr_candidate(raw: str) -> bool:
+    text = raw.strip()
+    if len(text) < 3 or text[-1] != ";" or text[0] not in "*@!":
+        return False
+    body = text[1:-1]
+    if text[0] == "@" and len(body) > 12:
+        body = body[12:]
+    return bool(body) and len(body) % 2 == 0 and all(
+        character in HEX_DIGITS for character in body.upper()
+    )

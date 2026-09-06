@@ -1,14 +1,26 @@
 import pytest
 
-from app.raw_messages import RawMessageLog, normalize_avr_message
+from app.raw_messages import RawMessageLog, decode_raw_line, normalize_raw_line
 
 
-def test_normalize_avr_message() -> None:
-    assert normalize_avr_message("*8D40621D58C382D690C8AC2863A7;\r\n") == (
+def test_normalize_raw_line_keeps_every_nonempty_frame() -> None:
+    assert normalize_raw_line("*8D40621D58C382D690C8AC2863A7;\r\n") == (
         "*8D40621D58C382D690C8AC2863A7;"
     )
-    assert normalize_avr_message("*0000;") is None
-    assert normalize_avr_message("*NOT-HEX;") is None
+    assert normalize_raw_line("*0000;") == "*0000;"
+    assert normalize_raw_line("*NOT-HEX;") == "*NOT-HEX;"
+    assert normalize_raw_line("!8D40621D;") == "!8D40621D;"
+    assert normalize_raw_line("  \n") is None
+
+
+def test_decode_raw_line_keeps_undecodable_frames() -> None:
+    valid = decode_raw_line("*8D40621D58C382D690C8AC2863A7;")
+    assert valid["df"] == 17
+    assert valid["icao"] == "40621d"
+    leftover = decode_raw_line("# heartbeat")
+    assert leftover["df"] is None
+    assert leftover["df_label"] == "сырой кадр"
+    assert leftover["text"] == "Кадр без разбора Mode-S"
 
 
 @pytest.mark.asyncio
@@ -42,3 +54,7 @@ async def test_raw_message_log_is_incremental_and_bounded() -> None:
     after_clear = await message_log.recent()
     assert len(after_clear["messages"]) == 1
     assert after_clear["last_id"] == 4
+    await message_log.append("# heartbeat")
+    leftover = await message_log.recent(after_id=4)
+    assert leftover["messages"][0]["raw"] == "# heartbeat"
+    assert leftover["messages"][0]["df"] is None

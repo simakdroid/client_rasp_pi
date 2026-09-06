@@ -1470,13 +1470,13 @@
     const previousTop = list.scrollTop;
     el["journal-count"].textContent = String(items.length);
     el["journal-hint"].textContent = rawMode
-      ? "Кадры Mode-S с порта readsb 30002: тип DF, ICAO, высота/squawk, дальность если борт уже декодирован. Время — UTC. «Очистить» стирает журнал на станции."
+      ? "Все строки с порта readsb 30002. AVR разбирается, остальное показывается как есть. Время — UTC. «Очистить» стирает журнал на станции."
       : "Изменения декодированных данных бортов. Время записей — UTC. «Очистить» стирает журнал на станции.";
     if (!items.length) {
       list.replaceChildren(
         emptyNode(
           rawMode
-            ? "Ожидание сырых Mode-S сообщений…"
+            ? "Ожидание сырых сообщений…"
             : "Ожидание декодированных сообщений…",
         ),
       );
@@ -1497,7 +1497,10 @@
         const label = document.createElement("strong");
         const icao = text(event.icao, "").toUpperCase();
         const callsign = text(event.callsign, "");
-        label.textContent = [icao || "MODE-S", callsign].filter(Boolean).join(" ");
+        label.textContent = [
+          icao || (event.df != null ? `DF${event.df}` : "сырой кадр"),
+          callsign,
+        ].filter(Boolean).join(" ");
         const details = document.createElement("p");
         details.textContent = text(event.text, text(event.df_label, "Mode-S"));
         const code = document.createElement("code");
