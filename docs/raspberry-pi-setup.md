@@ -234,70 +234,7 @@ Env-файлы и `/etc/default/readsb-adsb` с локальными коорд�
 сам перезапускает уже активные системные сервисы; явные команды выше также
 снимают возможный `start-limit`, оставшийся после старого цикла ошибок.
 
-Для доступа с другого компьютера в LAN backend должен слушать не только
-localhost. В `/etc/adsb-vhf/backend.env` задайте `BACKEND_HOST=0.0.0.0`
-(только IPv4) или `BACKEND_HOST=::` (IPv4 и IPv6). Запуск идёт через
-`python -m app.run`: обычный `uvicorn --host ::` оставляет сокет IPv6-only,
-launcher выставляет `IPV6_V6ONLY=0`. Затем
-`sudo systemctl restart adsb-vhf-backend`. Не публикуйте порт `8080` в интернет.
-
-## 8. Доступ по `http://airmon.local:8080/`
-
-Имя `airmon.local` публикует Avahi (mDNS). Браузер часто получает и IPv4, и
-IPv6. Запрос по IPv4 (`http://192.168.0.11:8080/`) стабилен, а тот же URL по
-имени может мигать «Связь потеряна»: UFW режет SYN на `8080/tcp` по IPv6, а
-uvicorn с `--host 0.0.0.0` IPv6 не слушает. Проверка на Pi:
-
-```bash
-sudo dmesg -T | grep -E 'UFW BLOCK.*DPT=8080'
-avahi-resolve -4 -n airmon.local
-avahi-resolve -6 -n airmon.local
-```
-
-Чтобы `.local` вёл себя как IPv4-адрес, оставьте в DNS только A-запись. В
-`/etc/avahi/avahi-daemon.conf` в секции `[server]`:
-
-```
-use-ipv4=yes
-use-ipv6=no
-```
-
-```bash
-sudo systemctl restart avahi-daemon
-```
-
-На клиенте Windows сбросьте кэш (`ipconfig /flushdns`). `ping airmon.local`
-должен показать IPv4 станции, не адрес `2a01:…` / `fe80:…`.
-
-Если нужно, чтобы имя работало и по IPv4, и по IPv6, оставьте Avahi
-`use-ipv4=yes` / `use-ipv6=yes`, в `backend.env` задайте `BACKEND_HOST=::`
-и откройте `8080/tcp` только для своей сети, не для `Anywhere`:
-
-```bash
-sudo ufw allow from 192.168.0.0/16 to any port 8080 proto tcp
-sudo ufw allow from fe80::/10 to any port 8080 proto tcp
-sudo ufw allow from 2a01:540:65b6:7800::/64 to any port 8080 proto tcp
-sudo ufw status
-sudo systemctl restart adsb-vhf-backend
-journalctl -u adsb-vhf-backend -n 20 --no-pager
-```
-
-В журнале должно быть `Listening dual-stack` и `IPV6_V6ONLY=0`.
-`ss` по-прежнему покажет только `[::]:8080` — это нормально для dual-stack.
-Префикс IPv6 замените на фактический (`ip -6 addr show wlan0`). Проверка с ПК
-(`curl.exe` в PowerShell, не alias `curl`):
-
-```bash
-curl -4 -sS http://192.168.0.11:8080/api/health
-curl -4 -sS http://airmon.local:8080/api/health
-curl -6 -sS http://airmon.local:8080/api/health
-```
-
-Все три запроса должны вернуть `"status":"ok"`. Если `-4` на IP не идёт —
-launcher ещё не задеплоен или `BACKEND_HOST` не `::`. Если `-6` не проходит —
-снова UFW или Avahi без AAAA.
-
-## 9. Chromium kiosk на Bookworm
+## 8. Chromium kiosk на Bookworm
 
 Raspberry Pi OS Bookworm Desktop обычно использует Wayfire/Wayland. Добавьте
 строку из `deploy/chromium/wayfire-autostart.ini` в существующую секцию
@@ -332,7 +269,7 @@ sudo raspi-config
 
 Выберите `System Options` → `Boot / Auto Login` → `Desktop Autologin`.
 
-## 10. Итоговая диагностика
+## 9. Итоговая диагностика
 
 ```bash
 systemctl --failed
