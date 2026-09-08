@@ -341,19 +341,19 @@ def summary_text(decoded: dict[str, Any]) -> str:
     if decoded.get("squawk"):
         parts.append(f"A{decoded['squawk']}")
     if decoded.get("acas_vs") is not None:
-        parts.append(f"VS {decoded['acas_vs']}")
+        parts.append(f"вертикальный статус: {decoded['acas_vs']}")
     if decoded.get("acas_sl") is not None:
-        parts.append(f"SL {decoded['acas_sl']}")
+        parts.append(f"уровень чувствительности: {decoded['acas_sl']}")
     if decoded.get("acas_ri") is not None:
-        parts.append(f"RI {decoded['acas_ri']}")
+        parts.append(f"сведения ответа: {decoded['acas_ri']}")
     if decoded.get("acas_cc") is not None and decoded.get("df") == 0:
-        parts.append(f"CC {decoded['acas_cc']}")
+        parts.append(f"перекрёстная связь: {decoded['acas_cc']}")
     if decoded.get("acas_ra") is not None:
-        parts.append(f"RA {decoded['acas_ra']}")
+        parts.append(f"рекомендация по разрешению: {decoded['acas_ra']}")
     if decoded.get("acas_rac") is not None:
-        parts.append(f"RAC {decoded['acas_rac']}")
+        parts.append(f"дополнение к рекомендации: {decoded['acas_rac']}")
     if decoded.get("acas_rat") is not None:
-        parts.append(f"RAT {decoded['acas_rat']}")
+        parts.append(f"признак завершения рекомендации: {decoded['acas_rat']}")
     if decoded.get("acas_threat") is not None:
         parts.append(f"угроза {decoded['acas_threat']}")
     distance = decoded.get("distance_km")

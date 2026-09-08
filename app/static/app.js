@@ -1431,13 +1431,13 @@
     if (event.altitude_ft != null) add("Высота", `${event.altitude_ft} ft`);
     else if (acas) add("Высота", "нет данных");
     if (event.squawk) add("Код ответчика", `A${event.squawk}`);
-    add("VS", event.acas_vs);
-    add("SL", event.acas_sl);
-    add("RI", event.acas_ri);
-    if (event.df === 0) add("CC", event.acas_cc);
-    add("RA", event.acas_ra);
-    add("RAC", event.acas_rac);
-    add("RAT", event.acas_rat);
+    add("Вертикальный статус", event.acas_vs);
+    add("Уровень чувствительности", event.acas_sl);
+    add("Сведения ответа", event.acas_ri);
+    if (event.df === 0) add("Перекрёстная связь", event.acas_cc);
+    add("Рекомендация по разрешению", event.acas_ra);
+    add("Дополнение к рекомендации", event.acas_rac);
+    add("Признак завершения рекомендации", event.acas_rat);
     add("Угроза", event.acas_threat);
     const distance = finite(event.distance_km);
     if (distance != null) {

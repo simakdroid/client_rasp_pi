@@ -82,7 +82,7 @@ def test_acas_short_reply_decodes_header() -> None:
     assert decoded["acas_ra"] == NO_DATA
     assert decoded["acas_threat"] == NO_DATA
     assert f"высота: {NO_DATA}" not in decoded["text"]
-    assert f"RA {NO_DATA}" in decoded["text"]
+    assert f"рекомендация по разрешению: {NO_DATA}" in decoded["text"]
 
 
 def test_acas_long_reply_decodes_ra() -> None:
