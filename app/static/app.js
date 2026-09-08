@@ -1163,6 +1163,7 @@
       state.reconnectAttempt = 0;
       startSocketTimers();
       setConnection("online", "В реальном времени");
+      void refreshHealth();
     });
     state.socket.addEventListener("message", (event) => {
       state.lastWsMessageAt = Date.now();
@@ -1245,7 +1246,7 @@
       const adsb = health.adsb || {};
       const wsOpen = state.socket?.readyState === WebSocket.OPEN;
       if (adsb.status === "online") {
-        if (wsOpen) setConnection("online", "В реальном времени");
+        if (wsOpen) setConnection("online", "ADS-B работает");
         return;
       }
       const labels = {
