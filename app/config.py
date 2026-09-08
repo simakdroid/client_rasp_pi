@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     )
 
     websocket_interval_s: float = Field(default=0.75, ge=0.2, le=5)
+    websocket_heartbeat_s: float = Field(default=10, ge=1, le=60)
     layers_dir: Path = Path(__file__).resolve().parent.parent / "data" / "layers"
     static_dir: Path = Path(__file__).resolve().parent / "static"
     cors_origins: list[str] = []

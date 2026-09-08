@@ -11,7 +11,7 @@ SupplementaryGroups=rtl-airband
 WorkingDirectory=/opt/adsb-vhf
 EnvironmentFile=/etc/adsb-vhf/backend.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/adsb-vhf/.venv/bin/uvicorn app.main:app --host ${BACKEND_HOST} --port ${BACKEND_PORT}
+ExecStart=/opt/adsb-vhf/.venv/bin/uvicorn app.main:app --host ${BACKEND_HOST} --port ${BACKEND_PORT} --ws-ping-interval 15 --ws-ping-timeout 30
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

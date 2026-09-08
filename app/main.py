@@ -16,9 +16,9 @@ from .adsb import AdsbSource, ReadsbJsonSource, SbsSource
 from .aircraft_types import AircraftTypeCatalog
 from .broadcast import BroadcastHub
 from .config import Settings, get_settings
-from .models import AircraftTypeInput
 from .diagnostics import read_adsb_status
 from .gis import LayerManager
+from .models import AircraftTypeInput
 from .radio import RadioMonitor
 from .raw_messages import RawMessageLog, ingest_raw_messages
 from .tracker import AircraftTracker
@@ -125,6 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else bool(settings.radio_channels)
             },
             "websocket_interval_ms": round(settings.websocket_interval_s * 1000),
+            "websocket_heartbeat_ms": round(settings.websocket_heartbeat_s * 1000),
         }
 
     @app.get("/api/coverage")
@@ -249,6 +250,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def aircraft_socket(websocket: WebSocket) -> None:
         await websocket.accept()
         queue = await hub.subscribe()
+        stop = asyncio.Event()
+
+        async def drain_client() -> None:
+            try:
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        break
+            except WebSocketDisconnect:
+                pass
+            finally:
+                stop.set()
+
+        drain = asyncio.create_task(drain_client())
         try:
             await websocket.send_json(
                 {
@@ -258,11 +273,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "archived": await tracker.archived_snapshot(),
                 }
             )
-            while True:
-                await websocket.send_json(await queue.get())
+            await _websocket_keepalive(
+                websocket, queue, stop, settings.websocket_heartbeat_s
+            )
         except WebSocketDisconnect:
             pass
         finally:
+            stop.set()
+            drain.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drain
             await hub.unsubscribe(queue)
 
     app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="ui")
@@ -282,6 +302,35 @@ def _create_source(settings: Settings) -> AdsbSource:
 async def _ingest(source: AdsbSource, tracker: AircraftTracker) -> None:
     async for batch in source.updates():
         await tracker.apply(batch)
+
+
+async def _websocket_keepalive(
+    websocket: WebSocket,
+    queue: asyncio.Queue[dict[str, object]],
+    stop: asyncio.Event,
+    heartbeat_s: float,
+) -> None:
+    """Send aircraft deltas, or a heartbeat when the socket would otherwise go idle."""
+    while not stop.is_set():
+        get_task = asyncio.create_task(queue.get())
+        stop_task = asyncio.create_task(stop.wait())
+        _, pending = await asyncio.wait(
+            {get_task, stop_task},
+            timeout=heartbeat_s,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        if stop.is_set():
+            return
+        if get_task.done() and not get_task.cancelled():
+            await websocket.send_json(get_task.result())
+            continue
+        await websocket.send_json(
+            {"type": "heartbeat", "time": datetime.now(UTC).isoformat()}
+        )
 
 
 async def _broadcast_loop(

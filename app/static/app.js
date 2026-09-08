@@ -4,6 +4,7 @@
   /*
    * Ожидаемый протокол /ws/aircraft:
    *   {"type":"snapshot","aircraft":[Aircraft, ...],"archived":[Aircraft, ...]};
+   *   {"type":"heartbeat"}                           — keepalive при тихом эфире;
    *   {"type":"upsert","aircraft":Aircraft}          — новый/изменённый борт;
    *   {"type":"remove","icao":"ABC123"}              — удалить борт.
    * Для совместимости snapshot может быть массивом, а delta — объектом
@@ -33,6 +34,9 @@
     socket: null,
     reconnectTimer: null,
     reconnectAttempt: 0,
+    wsPingTimer: null,
+    wsWatchdogTimer: null,
+    lastWsMessageAt: 0,
     tracksVisible: true,
     coverageVisible: true,
     coverageLayer: null,
@@ -89,6 +93,7 @@
       loadTypeCatalog(),
     ]);
     connectAircraftSocket();
+    document.addEventListener("visibilitychange", resumeSocketIfVisible);
     void refreshHealth();
     window.setInterval(loadRadioChannels, 5000);
     window.setInterval(refreshHealth, 5000);
@@ -1092,8 +1097,56 @@
     return (Math.atan2(y, x) / rad + 360) % 360;
   }
 
+  function wsHeartbeatMs() {
+    const value = Number(state.config.websocket_heartbeat_ms);
+    return Number.isFinite(value) && value >= 1000 ? value : 10000;
+  }
+
+  function stopSocketTimers() {
+    clearInterval(state.wsPingTimer);
+    clearInterval(state.wsWatchdogTimer);
+    state.wsPingTimer = null;
+    state.wsWatchdogTimer = null;
+  }
+
+  function startSocketTimers() {
+    stopSocketTimers();
+    const heartbeatMs = wsHeartbeatMs();
+    state.lastWsMessageAt = Date.now();
+    state.wsPingTimer = window.setInterval(() => {
+      if (state.socket?.readyState === WebSocket.OPEN) {
+        state.socket.send(JSON.stringify({ type: "ping" }));
+      }
+    }, heartbeatMs);
+    state.wsWatchdogTimer = window.setInterval(() => {
+      if (state.socket?.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - state.lastWsMessageAt > heartbeatMs * 3) {
+        state.socket.close();
+      }
+    }, Math.min(5000, heartbeatMs));
+  }
+
+  function discardSocket() {
+    stopSocketTimers();
+    const socket = state.socket;
+    state.socket = null;
+    if (!socket) return;
+    socket.removeEventListener("close", scheduleReconnect);
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.close();
+    }
+  }
+
+  function resumeSocketIfVisible() {
+    if (document.visibilityState !== "visible") return;
+    if (state.socket?.readyState === WebSocket.OPEN) return;
+    connectAircraftSocket();
+  }
+
   function connectAircraftSocket() {
     clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+    discardSocket();
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = state.config.aircraft_ws_url ||
       `${protocol}//${location.host}/ws/aircraft`;
@@ -1108,9 +1161,11 @@
 
     state.socket.addEventListener("open", () => {
       state.reconnectAttempt = 0;
+      startSocketTimers();
       setConnection("online", "В реальном времени");
     });
     state.socket.addEventListener("message", (event) => {
+      state.lastWsMessageAt = Date.now();
       try {
         applySocketMessage(JSON.parse(event.data));
       } catch (error) {
@@ -1122,6 +1177,9 @@
   }
 
   function applySocketMessage(message) {
+    if (message?.type === "heartbeat" || message?.type === "pong") {
+      return;
+    }
     if (Array.isArray(message)) {
       replaceAircraft(message);
       return;
@@ -1159,9 +1217,16 @@
   }
 
   function scheduleReconnect() {
+    stopSocketTimers();
     if (state.reconnectTimer) return;
-    setConnection("offline", "Связь потеряна");
-    const delay = Math.min(30000, 1000 * (2 ** state.reconnectAttempt)) + Math.random() * 500;
+    if (state.reconnectAttempt === 0) {
+      setConnection("connecting", "Повторное подключение…");
+    } else {
+      setConnection("offline", "Связь потеряна");
+    }
+    const delay = state.reconnectAttempt === 0
+      ? 250
+      : Math.min(30000, 1000 * (2 ** state.reconnectAttempt)) + Math.random() * 500;
     state.reconnectAttempt += 1;
     state.reconnectTimer = window.setTimeout(() => {
       state.reconnectTimer = null;
@@ -1178,16 +1243,17 @@
     try {
       const health = await fetchJson("/api/health");
       const adsb = health.adsb || {};
+      const wsOpen = state.socket?.readyState === WebSocket.OPEN;
       if (adsb.status === "online") {
-        setConnection("online", "ADS-B работает");
-      } else {
-        const labels = {
-          unavailable: "ADS-B: readsb недоступен",
-          stale: "ADS-B: данные устарели",
-          invalid: "ADS-B: ошибка JSON",
-        };
-        setConnection("offline", labels[adsb.status] || "ADS-B недоступен");
+        if (wsOpen) setConnection("online", "В реальном времени");
+        return;
       }
+      const labels = {
+        unavailable: "ADS-B: readsb недоступен",
+        stale: "ADS-B: данные устарели",
+        invalid: "ADS-B: ошибка JSON",
+      };
+      setConnection("offline", labels[adsb.status] || "ADS-B недоступен");
     } catch (_error) {
       // WebSocket owns the connection indicator if the health endpoint is unavailable.
     }
