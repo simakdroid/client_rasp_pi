@@ -20,6 +20,9 @@ class RawMessageLog:
         self._lock = asyncio.Lock()
 
     async def append(self, raw: str) -> None:
+        decoded = decode_raw_line(raw)
+        if decoded.get("df") == 0:
+            return
         async with self._lock:
             self._sequence += 1
             entry = {
@@ -27,7 +30,7 @@ class RawMessageLog:
                 "timestamp": datetime.now(UTC).isoformat(),
                 "raw": raw,
             }
-            entry.update(decode_raw_line(raw))
+            entry.update(decoded)
             self._messages.append(entry)
 
     async def recent(

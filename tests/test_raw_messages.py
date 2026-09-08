@@ -24,6 +24,16 @@ def test_decode_raw_line_keeps_undecodable_frames() -> None:
 
 
 @pytest.mark.asyncio
+async def test_raw_message_log_drops_short_acas_df0() -> None:
+    message_log = RawMessageLog(max_messages=10)
+    await message_log.append("*8D40621D58C382D690C8AC2863A7;")
+    await message_log.append("*00000000000000;")
+    recent = await message_log.recent()
+    assert [message["df"] for message in recent["messages"]] == [17]
+    assert recent["last_id"] == 1
+
+
+@pytest.mark.asyncio
 async def test_raw_message_log_is_incremental_and_bounded() -> None:
     message_log = RawMessageLog(max_messages=2)
     await message_log.append("*8D40621D58C382D690C8AC2863A7;")
