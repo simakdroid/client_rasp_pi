@@ -235,7 +235,7 @@ class AircraftTracker:
         previous = self._latest_archive(update.icao)
         if previous is None:
             return None
-        if _flight_identity_differs(previous, update):
+        if _should_start_new_contact(previous, update):
             return AircraftState(
                 icao=update.icao,
                 category=previous.category,
@@ -416,18 +416,20 @@ def _normalized_callsign(value: str | None) -> str | None:
     return compact or None
 
 
-def _flight_identity_differs(previous: AircraftState, update: AircraftUpdate) -> bool:
+def _should_start_new_contact(previous: AircraftState, update: AircraftUpdate) -> bool:
     incoming_squawk = (update.squawk or "").strip() or None
     previous_squawk = (previous.squawk or "").strip() or None
-    if incoming_squawk and previous_squawk and incoming_squawk != previous_squawk:
-        return True
     incoming_callsign = _normalized_callsign(update.callsign)
     previous_callsign = _normalized_callsign(previous.callsign)
-    return bool(
-        incoming_callsign
-        and previous_callsign
-        and incoming_callsign != previous_callsign
-    )
+    if incoming_squawk and previous_squawk and incoming_squawk != previous_squawk:
+        return True
+    if incoming_callsign and previous_callsign and incoming_callsign != previous_callsign:
+        return True
+    if not incoming_callsign and not previous_callsign:
+        return True
+    if not incoming_squawk and not previous_squawk:
+        return True
+    return False
 
 
 def _event_text(state: AircraftState, kind: str) -> str:
