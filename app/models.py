@@ -66,6 +66,7 @@ class AircraftState:
     updated_at: datetime = field(default_factory=utc_now)
     started_at: datetime | None = None
     lost_at: datetime | None = None
+    contact_id: str | None = None
     revision: int = 0
 
     def public_dict(self, include_track: bool = True) -> dict[str, Any]:
@@ -91,6 +92,7 @@ class AircraftState:
             "updated_at": self.updated_at.isoformat(),
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "lost_at": self.lost_at.isoformat() if self.lost_at else None,
+            "contact_id": self.contact_id,
             "status": "archived" if self.lost_at else "live",
             "revision": self.revision,
         }

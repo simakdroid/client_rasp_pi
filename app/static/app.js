@@ -9,7 +9,7 @@
    *   {"type":"remove","icao":"ABC123"}              — удалить борт.
    * Для совместимости snapshot может быть массивом, а delta — объектом
    * {"type":"delta","upsert":[...], "remove":["ABC123", ...],
-   *  "archive":[Aircraft, ...], "archive_remove":["ABC123", ...]}.
+   *  "archive":[Aircraft, ...], "archive_remove":["abc123-1", ...]}.
    * Элемент upsert может содержать track_append с новыми точками вместо полной
    * истории. Aircraft обязан содержать icao (или hex), lat, lon; остальные
    * используемые поля необязательны: callsign, altitude/alt_baro,
@@ -289,16 +289,24 @@
     finishAircraftUpdate();
   }
 
+  function archiveKey(aircraft) {
+    return text(aircraft.contact_id, "") || normalizeIcao(aircraft);
+  }
+
+  function selectionKey(aircraft, archived = false) {
+    return archived ? archiveKey(aircraft) : normalizeIcao(aircraft);
+  }
+
   function replaceArchive(items) {
     const incoming = new Set();
     items.forEach((aircraft) => {
-      const icao = normalizeIcao(aircraft);
-      if (!icao || state.aircraft.has(icao)) return;
-      incoming.add(icao);
+      const key = archiveKey(aircraft);
+      if (!key) return;
+      incoming.add(key);
       archiveAircraft(aircraft, false);
     });
-    [...state.archived.keys()].forEach((icao) => {
-      if (!incoming.has(icao)) dropArchive(icao, false);
+    [...state.archived.keys()].forEach((key) => {
+      if (!incoming.has(key)) dropArchive(key, false);
     });
   }
 
@@ -306,22 +314,10 @@
     const icao = normalizeIcao(aircraft);
     if (!icao) return;
 
-    const previous = state.aircraft.get(icao);
-    const archived = state.archived.get(icao);
-    const resurrecting = !previous && !!archived;
-    dropArchive(icao, false);
+    const previous = state.aircraft.get(icao) || {};
     const incomingLat = finite(aircraft.lat ?? aircraft.latitude);
     const incomingLon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    const base = resurrecting
-      ? {
-          callsign: archived.callsign,
-          squawk: archived.squawk,
-          type_code: archived.type_code,
-          type_desc: archived.type_desc,
-          category: archived.category,
-        }
-      : (previous || {});
-    const merged = { ...base, ...aircraft, icao };
+    const merged = { ...previous, ...aircraft, icao };
     if (incomingLat === null) {
       merged.lat = finite(previous.lat ?? previous.latitude);
     }
@@ -354,27 +350,33 @@
     state.aircraft.delete(icao);
     removeMapObjects(icao);
     if (state.selectedIcao === icao) state.selectedIcao = null;
-    dropArchive(icao, false);
     if (render) finishAircraftUpdate();
   }
 
   function archiveAircraft(aircraft, render = true) {
     const icao = normalizeIcao(aircraft);
-    if (!icao) return;
-    state.aircraft.delete(icao);
-    removeMapObjects(icao);
-    const merged = { ...(state.archived.get(icao) || {}), ...aircraft, icao, status: "archived" };
-    state.archived.set(icao, merged);
+    const key = archiveKey(aircraft);
+    if (!icao || !key) return;
+    const live = state.aircraft.get(icao);
+    if (live && (text(live.contact_id, "") === key || !live.contact_id)) {
+      state.aircraft.delete(icao);
+      removeMapObjects(icao);
+      if (state.selectedIcao === icao) state.selectedIcao = null;
+    }
+    const merged = { ...(state.archived.get(key) || {}), ...aircraft, icao, status: "archived" };
+    state.archived.set(key, merged);
     updateArchiveMarker(merged);
     if (render) finishAircraftUpdate();
   }
 
-  function dropArchive(icaoValue, render = true) {
-    const icao = text(icaoValue, "").toUpperCase();
-    state.archived.delete(icao);
-    const marker = state.archiveMarkers.get(icao);
+  function dropArchive(keyValue, render = true) {
+    const key = text(keyValue, "");
+    if (!key) return;
+    state.archived.delete(key);
+    const marker = state.archiveMarkers.get(key);
     if (marker) state.map.removeLayer(marker);
-    state.archiveMarkers.delete(icao);
+    state.archiveMarkers.delete(key);
+    if (state.selectedIcao === key) state.selectedIcao = null;
     if (render) finishAircraftUpdate();
   }
 
@@ -426,13 +428,13 @@
   }
 
   function updateArchiveMarker(aircraft) {
-    const icao = aircraft.icao;
+    const key = archiveKey(aircraft);
     const lat = finite(aircraft.lat ?? aircraft.latitude);
     const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    const existing = state.archiveMarkers.get(icao);
+    const existing = state.archiveMarkers.get(key);
     if (lat === null || lon === null) {
       if (existing) state.map.removeLayer(existing);
-      state.archiveMarkers.delete(icao);
+      state.archiveMarkers.delete(key);
       return;
     }
     const altitude = aircraftAltitude(aircraft);
@@ -447,10 +449,10 @@
         riseOnHover: true,
         opacity: .7,
       }).addTo(state.map);
-      marker.on("click", () => selectAircraft(icao));
+      marker.on("click", () => selectAircraft(key));
       marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft, true));
       marker.bindPopup(createTooltip(aircraft), { className: "aircraft-tooltip" });
-      state.archiveMarkers.set(icao, marker);
+      state.archiveMarkers.set(key, marker);
       return;
     }
     existing.setLatLng([lat, lon]);
@@ -464,7 +466,7 @@
       permanent: true,
       direction: "right",
       offset: [18, 0],
-      className: `aircraft-label${aircraft.icao === state.selectedIcao ? " is-selected" : ""}${
+      className: `aircraft-label${selectionKey(aircraft, archived) === state.selectedIcao ? " is-selected" : ""}${
         archived ? " is-archived" : ""
       }`,
       opacity: 1,
@@ -756,7 +758,7 @@
   function fillAircraftCard(aircraft, archived = false) {
     const card = byId("aircraft-card-template").content.firstElementChild.cloneNode(true);
     card.dataset.icao = aircraft.icao;
-    card.classList.toggle("is-selected", state.selectedIcao === aircraft.icao);
+    card.classList.toggle("is-selected", state.selectedIcao === selectionKey(aircraft, archived));
     card.classList.toggle("is-archived", archived);
     card.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
     card.querySelector(".aircraft-card__flight strong").textContent = text(
@@ -784,7 +786,7 @@
         formatContactTime(aircraft.lost_at);
     }
     card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
-    card.addEventListener("click", () => selectAircraft(aircraft.icao));
+    card.addEventListener("click", () => selectAircraft(selectionKey(aircraft, archived)));
     return card;
   }
 
@@ -1217,7 +1219,7 @@
       const archivedIcaos = new Set(
         (message.archive || []).map((aircraft) => normalizeIcao(aircraft)).filter(Boolean),
       );
-      (message.archive_remove || []).forEach((icao) => dropArchive(icao, false));
+      (message.archive_remove || []).forEach((key) => dropArchive(key, false));
       (message.archive || []).forEach((aircraft) => archiveAircraft(aircraft, false));
       (message.remove || []).forEach((icao) => {
         if (!archivedIcaos.has(text(icao, "").toUpperCase())) {

@@ -41,8 +41,10 @@ class AircraftTracker:
         self.max_archive = max_archive
         self._aircraft: dict[str, AircraftState] = {}
         self._archive: OrderedDict[str, AircraftState] = OrderedDict()
+        self._contact_seq = 0
         self._changed: set[str] = set()
         self._removed: set[str] = set()
+        self._archive_added: list[str] = []
         self._archive_evicted: set[str] = set()
         self._track_appends: dict[str, list[Position]] = {}
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
@@ -93,7 +95,7 @@ class AircraftTracker:
             for message in messages:
                 item = dict(message)
                 icao = str(item.get("icao") or "").lower()
-                state = self._aircraft.get(icao) or self._archive.get(icao)
+                state = self._aircraft.get(icao) or self._latest_archive(icao)
                 if state:
                     item["known"] = True
                     df = item.get("df")
@@ -163,9 +165,9 @@ class AircraftTracker:
                     ]
                 changed.append(item)
             archived = [
-                self._export(self._archive[icao], include_track=False)
-                for icao in self._removed
-                if icao in self._archive
+                self._export(self._archive[contact_id], include_track=False)
+                for contact_id in self._archive_added
+                if contact_id in self._archive
             ]
             result = {
                 "type": "delta",
@@ -177,6 +179,7 @@ class AircraftTracker:
             }
             self._changed.clear()
             self._removed.clear()
+            self._archive_added.clear()
             self._archive_evicted.clear()
             self._track_appends.clear()
             return result
@@ -208,21 +211,42 @@ class AircraftTracker:
     def _store_archive(self, state: AircraftState, lost_at: datetime) -> None:
         if self.max_archive <= 0:
             return
+        if not state.contact_id:
+            state.contact_id = self._next_contact_id(state.icao)
         state.lost_at = lost_at
-        self._archive.pop(state.icao, None)
-        self._archive[state.icao] = state
-        self._archive_evicted.discard(state.icao)
+        self._archive[state.contact_id] = state
+        self._archive_added.append(state.contact_id)
+        self._archive_evicted.discard(state.contact_id)
         while len(self._archive) > self.max_archive:
             evicted_id, _ = self._archive.popitem(last=False)
             self._archive_evicted.add(evicted_id)
 
-    def _restore_archive(self, icao: str) -> AircraftState | None:
-        previous = self._archive.pop(icao, None)
+    def _latest_archive(self, icao: str) -> AircraftState | None:
+        for state in reversed(self._archive.values()):
+            if state.icao == icao:
+                return state
+        return None
+
+    def _next_contact_id(self, icao: str) -> str:
+        self._contact_seq += 1
+        return f"{icao}-{self._contact_seq}"
+
+    def _restore_archive(self, update: AircraftUpdate) -> AircraftState | None:
+        previous = self._latest_archive(update.icao)
         if previous is None:
             return None
-        self._archive_evicted.discard(icao)
+        if _flight_identity_differs(previous, update):
+            return AircraftState(
+                icao=update.icao,
+                category=previous.category,
+                type_code=previous.type_code,
+                type_desc=previous.type_desc,
+            )
+        self._archive.pop(previous.contact_id, None)
+        if previous.contact_id:
+            self._archive_evicted.add(previous.contact_id)
         return AircraftState(
-            icao=icao,
+            icao=update.icao,
             callsign=previous.callsign,
             squawk=previous.squawk,
             category=previous.category,
@@ -234,13 +258,15 @@ class AircraftTracker:
         state = self._aircraft.get(update.icao)
         is_new = state is None
         if is_new:
-            state = self._restore_archive(update.icao) or AircraftState(
+            state = self._restore_archive(update) or AircraftState(
                 icao=update.icao,
                 updated_at=update.received_at,
                 started_at=update.received_at,
             )
             state.started_at = update.received_at
             state.updated_at = update.received_at
+            if not state.contact_id:
+                state.contact_id = self._next_contact_id(update.icao)
             self._aircraft[update.icao] = state
 
         changed = is_new
@@ -381,6 +407,27 @@ class AircraftTracker:
         if len(state.track) > self.max_track_points:
             del state.track[: len(state.track) - self.max_track_points]
         return True
+
+
+def _normalized_callsign(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = " ".join(value.split()).upper()
+    return compact or None
+
+
+def _flight_identity_differs(previous: AircraftState, update: AircraftUpdate) -> bool:
+    incoming_squawk = (update.squawk or "").strip() or None
+    previous_squawk = (previous.squawk or "").strip() or None
+    if incoming_squawk and previous_squawk and incoming_squawk != previous_squawk:
+        return True
+    incoming_callsign = _normalized_callsign(update.callsign)
+    previous_callsign = _normalized_callsign(previous.callsign)
+    return bool(
+        incoming_callsign
+        and previous_callsign
+        and incoming_callsign != previous_callsign
+    )
 
 
 def _event_text(state: AircraftState, kind: str) -> str:

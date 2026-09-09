@@ -206,3 +206,58 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert second_archive[0]["started_at"] != first_started
     assert second_archive[0]["lost_at"] != first_lost
     assert second_archive[0]["started_at"] == live[0]["started_at"]
+
+
+@pytest.mark.asyncio
+async def test_tracker_keeps_archive_when_squawk_or_callsign_changes(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=3)
+    first_seen = datetime.now(UTC) - timedelta(minutes=10)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.1,
+                lon=37.1,
+                squawk="7700",
+                callsign="TEST42",
+                received_at=first_seen,
+            )
+        ]
+    )
+    await tracker.prune()
+    first_archive = (await tracker.archived_snapshot())[0]
+    await tracker.consume_delta()
+
+    second_seen = datetime.now(UTC) - timedelta(seconds=5)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.4,
+                lon=37.4,
+                squawk="1200",
+                callsign="OTHER1",
+                received_at=second_seen,
+            )
+        ]
+    )
+    live = await tracker.snapshot()
+    still_archived = await tracker.archived_snapshot()
+    assert live[0]["squawk"] == "1200"
+    assert live[0]["callsign"] == "OTHER1"
+    assert live[0]["started_at"] != first_archive["started_at"]
+    assert len(still_archived) == 1
+    assert still_archived[0]["squawk"] == "7700"
+    assert still_archived[0]["callsign"] == "TEST42"
+    assert still_archived[0]["contact_id"] != live[0]["contact_id"]
+
+    await tracker.prune()
+    archived = await tracker.archived_snapshot()
+    assert len(archived) == 2
+    squawks = {item["squawk"] for item in archived}
+    callsigns = {item["callsign"] for item in archived}
+    assert squawks == {"7700", "1200"}
+    assert callsigns == {"TEST42", "OTHER1"}
+
