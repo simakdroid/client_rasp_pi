@@ -128,3 +128,40 @@ def test_adsb_acas_ra_broadcast() -> None:
     assert "корректирующий" in decoded["acas_ra"]
     assert decoded["acas_threat"] == "abc123"
     assert decoded["acas_rat"] == "активен"
+
+
+def test_acas_ri_unassigned_codes() -> None:
+    high, low = _altitude_bytes(1040)
+    body = bytearray(4)
+    body[1] = (4 << 5) | ((7 >> 1) & 0x07)
+    body[2] = ((7 & 1) << 7) | high
+    body[3] = low
+    decoded = decode_avr(_finish_mode_s(body, 0xABC123))
+    assert decoded["acas_ri"] == "не назначено"
+
+
+def test_gillham_altitude_from_ac13() -> None:
+    from app.mode_s import _decode_ac13_field
+
+    field = next(
+        candidate
+        for candidate in range(0x2000)
+        if not candidate & 0x50 and _decode_ac13_field(candidate) == 10000
+    )
+    head = bytearray(4)
+    head[0] = 4 << 3
+    head[2] = (field >> 8) & 0x1F
+    head[3] = field & 0xFF
+    decoded = decode_avr(_finish_mode_s(head, 0xABC123))
+    assert decoded["altitude_ft"] == 10000
+
+
+def test_df16_decodes_gillham_altitude_from_frame() -> None:
+    decoded = decode_avr("*87D394A7412EF63C0E4D8C6140A6;")
+    assert decoded["df"] == 16
+    assert decoded["icao"] == "8b7a9a"
+    assert decoded["acas_vs"] == "на земле"
+    assert decoded["acas_sl"] == "уровень 6"
+    assert decoded["acas_ri"] == "не назначено"
+    assert decoded["altitude_ft"] == 67400
+    assert f"высота: {NO_DATA}" not in decoded["text"]

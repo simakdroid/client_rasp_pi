@@ -117,6 +117,40 @@ async def test_tracker_attaches_distance_to_mode_s(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tracker_does_not_mix_adsb_into_acas_reply(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="8b7a9a",
+                lat=55.0,
+                lon=37.0,
+                altitude_ft=21575,
+                squawk="1200",
+                received_at=datetime.now(UTC),
+            )
+        ]
+    )
+    enriched = await tracker.attach_mode_s_context(
+        [
+            {
+                "icao": "8b7a9a",
+                "df": 16,
+                "df_label": "ACAS long",
+                "altitude_ft": None,
+                "squawk": None,
+            }
+        ]
+    )
+    assert enriched[0]["known"] is True
+    assert "altitude_ft" not in enriched[0] or enriched[0]["altitude_ft"] is None
+    assert "distance_km" not in enriched[0]
+    assert "squawk" not in enriched[0] or not enriched[0]["squawk"]
+
+
+@pytest.mark.asyncio
 async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     layers = LayerManager(tmp_path)
     layers.refresh()

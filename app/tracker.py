@@ -96,12 +96,15 @@ class AircraftTracker:
                 state = self._aircraft.get(icao) or self._archive.get(icao)
                 if state:
                     item["known"] = True
-                    item["distance_km"] = state.distance_km
+                    df = item.get("df")
+                    acas_reply = df in {0, 16}
+                    if not acas_reply:
+                        item["distance_km"] = state.distance_km
                     if not item.get("callsign") and state.callsign:
                         item["callsign"] = state.callsign
-                    if item.get("altitude_ft") is None:
+                    if not acas_reply and df not in {4, 20} and item.get("altitude_ft") is None:
                         item["altitude_ft"] = state.altitude_ft
-                    if not item.get("squawk"):
+                    if not acas_reply and not item.get("squawk"):
                         item["squawk"] = state.squawk
                     item["text"] = summary_text(item)
                 enriched.append(item)

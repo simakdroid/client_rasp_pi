@@ -96,17 +96,7 @@ def _icao_from_ap(data: bytes) -> str | None:
 def _decode_ac13(data: bytes) -> int | None:
     if len(data) < 4:
         return None
-    if data[3] & 0x40:
-        return None
-    if data[3] & 0x10:
-        n_value = (
-            ((data[2] & 0x1F) << 6)
-            | ((data[3] & 0x80) >> 2)
-            | ((data[3] & 0x20) >> 1)
-            | (data[3] & 0x0F)
-        )
-        return 25 * n_value - 1000
-    return None
+    return _decode_ac13_field(_bit_field(data, 20, 13))
 
 
 def _decode_id13(data: bytes) -> str | None:
@@ -174,12 +164,16 @@ def _decode_callsign(data: bytes) -> str | None:
 
 NO_DATA = "нет данных"
 
+_RI_UNASSIGNED = "не назначено"
 _RI_LABELS = {
     0: "нет ACAS",
+    1: _RI_UNASSIGNED,
     2: "RA запрещены",
     3: "только вертикальный RA",
     4: "вертикальный и горизонтальный RA",
-    7: "вертикальный и горизонтальный RA",
+    5: _RI_UNASSIGNED,
+    6: _RI_UNASSIGNED,
+    7: _RI_UNASSIGNED,
     8: "макс. скорость неизвестна",
     9: "≤75 уз",
     10: "≤150 уз",
@@ -324,9 +318,80 @@ def _threat_text(mb: bytes) -> str:
 
 
 def _decode_ac13_field(field: int) -> int | None:
-    packed = field.to_bytes(2, "big")
-    fake = bytes([0, 0, packed[0], packed[1]])
-    return _decode_ac13(fake)
+    if field & 0x40:
+        return None
+    if field & 0x10:
+        n_value = ((field & 0x1F80) >> 2) | ((field & 0x0020) >> 1) | (field & 0x000F)
+        return 25 * n_value - 1000
+    hundreds = _mode_a_to_mode_c(_ac13_to_mode_a(field))
+    if hundreds is None or hundreds < -12:
+        return None
+    return 100 * hundreds
+
+
+def _ac13_to_mode_a(field: int) -> int:
+    mode_a = 0
+    if field & 0x1000:
+        mode_a |= 0x0010
+    if field & 0x0800:
+        mode_a |= 0x1000
+    if field & 0x0400:
+        mode_a |= 0x0020
+    if field & 0x0200:
+        mode_a |= 0x2000
+    if field & 0x0100:
+        mode_a |= 0x0040
+    if field & 0x0080:
+        mode_a |= 0x4000
+    if field & 0x0020:
+        mode_a |= 0x0100
+    if field & 0x0010:
+        mode_a |= 0x0001
+    if field & 0x0008:
+        mode_a |= 0x0200
+    if field & 0x0004:
+        mode_a |= 0x0002
+    if field & 0x0002:
+        mode_a |= 0x0400
+    if field & 0x0001:
+        mode_a |= 0x0004
+    return mode_a
+
+
+def _mode_a_to_mode_c(mode_a: int) -> int | None:
+    if mode_a & 0x8889 or (mode_a & 0x00F0) == 0:
+        return None
+    one_hundreds = 0
+    if mode_a & 0x0010:
+        one_hundreds ^= 0x007
+    if mode_a & 0x0020:
+        one_hundreds ^= 0x003
+    if mode_a & 0x0040:
+        one_hundreds ^= 0x001
+    if (one_hundreds & 5) == 5:
+        one_hundreds ^= 2
+    if one_hundreds > 5:
+        return None
+    five_hundreds = 0
+    if mode_a & 0x0002:
+        five_hundreds ^= 0x0FF
+    if mode_a & 0x0004:
+        five_hundreds ^= 0x07F
+    if mode_a & 0x1000:
+        five_hundreds ^= 0x03F
+    if mode_a & 0x2000:
+        five_hundreds ^= 0x01F
+    if mode_a & 0x4000:
+        five_hundreds ^= 0x00F
+    if mode_a & 0x0100:
+        five_hundreds ^= 0x007
+    if mode_a & 0x0200:
+        five_hundreds ^= 0x003
+    if mode_a & 0x0400:
+        five_hundreds ^= 0x001
+    if five_hundreds & 1:
+        one_hundreds = 6 - one_hundreds
+    return five_hundreds * 5 + one_hundreds - 13
 
 
 def summary_text(decoded: dict[str, Any]) -> str:
