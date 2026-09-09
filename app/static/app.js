@@ -306,11 +306,22 @@
     const icao = normalizeIcao(aircraft);
     if (!icao) return;
 
-    const previous = state.aircraft.get(icao) || state.archived.get(icao) || {};
+    const previous = state.aircraft.get(icao);
+    const archived = state.archived.get(icao);
+    const resurrecting = !previous && !!archived;
     dropArchive(icao, false);
     const incomingLat = finite(aircraft.lat ?? aircraft.latitude);
     const incomingLon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    const merged = { ...previous, ...aircraft, icao };
+    const base = resurrecting
+      ? {
+          callsign: archived.callsign,
+          squawk: archived.squawk,
+          type_code: archived.type_code,
+          type_desc: archived.type_desc,
+          category: archived.category,
+        }
+      : (previous || {});
+    const merged = { ...base, ...aircraft, icao };
     if (incomingLat === null) {
       merged.lat = finite(previous.lat ?? previous.latitude);
     }

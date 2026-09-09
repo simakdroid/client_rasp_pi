@@ -155,7 +155,7 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     layers = LayerManager(tmp_path)
     layers.refresh()
     tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=2)
-    stale = datetime.now(UTC) - timedelta(seconds=5)
+    first_seen = datetime.now(UTC) - timedelta(minutes=10)
 
     await tracker.apply(
         [
@@ -165,7 +165,7 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
                 lon=37.1,
                 squawk="7700",
                 callsign="TEST42",
-                received_at=stale,
+                received_at=first_seen,
             )
         ]
     )
@@ -179,19 +179,30 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert archived[0]["squawk"] == "7700"
     assert archived[0]["lost_at"] is not None
     assert archived[0]["started_at"] is not None
-    started_at = archived[0]["started_at"]
+    first_started = archived[0]["started_at"]
+    first_lost = archived[0]["lost_at"]
 
     delta = await tracker.consume_delta()
     assert delta is not None
     assert delta["remove"] == ["abc123"]
     assert delta["archive"][0]["icao"] == "abc123"
 
+    second_seen = datetime.now(UTC) - timedelta(seconds=5)
     await tracker.apply(
-        [AircraftUpdate(icao="abc123", lat=55.2, lon=37.2, received_at=datetime.now(UTC))]
+        [AircraftUpdate(icao="abc123", lat=55.2, lon=37.2, received_at=second_seen)]
     )
     live = await tracker.snapshot()
     assert live[0]["status"] == "live"
     assert live[0]["squawk"] == "7700"
-    assert live[0]["started_at"] == started_at
+    assert live[0]["callsign"] == "TEST42"
+    assert live[0]["started_at"] != first_started
     assert live[0]["lost_at"] is None
+    assert live[0]["track"][-1][0] == 55.2
+    assert all(point[0] != 55.1 for point in live[0]["track"])
     assert await tracker.archived_snapshot() == []
+
+    await tracker.prune()
+    second_archive = await tracker.archived_snapshot()
+    assert second_archive[0]["started_at"] != first_started
+    assert second_archive[0]["lost_at"] != first_lost
+    assert second_archive[0]["started_at"] == live[0]["started_at"]

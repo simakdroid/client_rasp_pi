@@ -217,12 +217,18 @@ class AircraftTracker:
             self._archive_evicted.add(evicted_id)
 
     def _restore_archive(self, icao: str) -> AircraftState | None:
-        state = self._archive.pop(icao, None)
-        if state is None:
+        previous = self._archive.pop(icao, None)
+        if previous is None:
             return None
-        state.lost_at = None
         self._archive_evicted.discard(icao)
-        return state
+        return AircraftState(
+            icao=icao,
+            callsign=previous.callsign,
+            squawk=previous.squawk,
+            category=previous.category,
+            type_code=previous.type_code,
+            type_desc=previous.type_desc,
+        )
 
     def _merge(self, update: AircraftUpdate) -> None:
         state = self._aircraft.get(update.icao)
@@ -233,8 +239,8 @@ class AircraftTracker:
                 updated_at=update.received_at,
                 started_at=update.received_at,
             )
-            if state.started_at is None:
-                state.started_at = update.received_at
+            state.started_at = update.received_at
+            state.updated_at = update.received_at
             self._aircraft[update.icao] = state
 
         changed = is_new
