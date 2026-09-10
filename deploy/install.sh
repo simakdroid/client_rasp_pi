@@ -76,12 +76,21 @@ for name in coverage-rose.json aircraft-types.json; do
     chown adsb-vhf:adsb-vhf "/var/lib/adsb-vhf/$name"
   fi
 done
-if [ -f /etc/adsb-vhf/backend.env ]; then
-  sed -i \
-    -e 's|/opt/adsb-vhf/data/coverage-rose.json|/var/lib/adsb-vhf/coverage-rose.json|' \
-    -e 's|/opt/adsb-vhf/data/aircraft-types.json|/var/lib/adsb-vhf/aircraft-types.json|' \
-    /etc/adsb-vhf/backend.env
-fi
+ensure_backend_writable_file() {
+  key=$1
+  dest=$2
+  envfile=/etc/adsb-vhf/backend.env
+  [ -f "$envfile" ] || return 0
+  name=$(basename "$dest")
+  if grep -q "^${key}=" "$envfile"; then
+    # Existing env files from before 2.0 still point at the now read-only data dir.
+    sed -i -E "s|^(${key}=)\"?/opt/adsb-vhf/data/${name}\"?[[:space:]]*$|\1${dest}|" "$envfile"
+  else
+    printf '%s=%s\n' "$key" "$dest" >> "$envfile"
+  fi
+}
+ensure_backend_writable_file AIRMON_COVERAGE_PATH /var/lib/adsb-vhf/coverage-rose.json
+ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH /var/lib/adsb-vhf/aircraft-types.json
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb

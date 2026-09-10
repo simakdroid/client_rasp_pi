@@ -254,6 +254,12 @@ Production-bind задают `BACKEND_HOST` и `BACKEND_PORT` в этом фай
 подставляет `uvicorn` в unit. `AIRMON_HOST` / `AIRMON_PORT` из локального
 `.env` нужны только разработчику (`uvicorn` из CLI) и systemd не читает.
 
+Каталог типов ВС и роза покрытия пишутся в `/var/lib/adsb-vhf`
+(`AIRMON_AIRCRAFT_TYPES_PATH`, `AIRMON_COVERAGE_PATH`). `/opt/adsb-vhf/data`
+при `ProtectSystem=strict` только для чтения: слой GIS туда кладут вручную,
+а сохранение типов в этот путь даёт `Read-only file system`. Повторный
+`install.sh` дописывает недостающие ключи в уже существующий `backend.env`.
+
 Если backend будет доступен из LAN, задайте `AIRMON_ADMIN_TOKEN` и не кладите
 его в статику. Изменяющие маршруты (`/api/coverage/reset`, каталог типов,
 очистка журналов) требуют заголовок `X-Admin-Token`. Kiosk на loopback без

@@ -100,6 +100,8 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "StateDirectory=adsb-vhf" in backend
     assert "/var/lib/adsb-vhf" in backend
     assert "/opt/adsb-vhf/data/layers" in backend
+    assert "AIRMON_AIRCRAFT_TYPES_PATH=/var/lib/adsb-vhf/aircraft-types.json" in backend
+    assert "AIRMON_COVERAGE_PATH=/var/lib/adsb-vhf/coverage-rose.json" in backend
 
     install = (ROOT / "deploy" / "install.sh").read_text(encoding="utf-8")
     assert "rtl-sdr" in install
@@ -107,6 +109,8 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "sdr.env" in install
     assert "/var/lib/adsb-vhf" in install
     assert "/opt/air-monitor" not in install
+    assert "ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH" in install
+    assert "ensure_backend_writable_file AIRMON_COVERAGE_PATH" in install
 
 
 def test_kiosk_fails_if_backend_never_answers() -> None:
