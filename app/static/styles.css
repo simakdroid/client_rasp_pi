@@ -284,7 +284,8 @@ h1, h2, h3, p { margin: 0; }
 }
 #panel-journal.tab-panel,
 #panel-aircraft.tab-panel,
-#panel-types.tab-panel { overflow: hidden; }
+#panel-types.tab-panel,
+#panel-layers.tab-panel { overflow: hidden; }
 
 .panel-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { font-size: 14px; }
@@ -643,6 +644,21 @@ h1, h2, h3, p { margin: 0; }
 
 .layer-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .layer-group h3 { margin-bottom: 8px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+#panel-layers .layer-group { flex: 0 0 auto; }
+#panel-layers .journal-hint { flex: 0 0 auto; }
+#panel-layers .layer-group--layers {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.custom-layers {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+}
 .option, .radio-channel {
   display: flex;
   align-items: center;

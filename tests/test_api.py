@@ -55,7 +55,8 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'data-tab="types"' in page
         assert 'id="type-catalog-form"' in page
         assert client.get("/api/aircraft-types").json()["types"] == []
-        assert "pane-scroll" in page
+        assert 'id="custom-layers"' in page
+        assert 'class="custom-layers pane-scroll"' in page
         assert "aircraft-card__squawk" in page
         assert "aircraft-card__type" in page
         assert "Время записей — UTC" in page
