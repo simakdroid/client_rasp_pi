@@ -5,8 +5,10 @@ SYSFS_ROOT=${RTL_SYSFS_ROOT:-/sys/bus/usb/devices}
 PREFERRED_ADSB_SERIAL=${ADSB_PREFERRED_SERIAL:-1090}
 VHF_SERIAL=${VHF_SERIAL:-0118}
 
-# USB iSerial and librtlsdr EEPROM serial are not the same string.
-# readsb --device matches librtlsdr. With one dongle always use index 0.
+# USB iSerial and librtlsdr EEPROM serial are not the same string until
+# rtl_eeprom -s has been written and the dongle replugged. readsb --device
+# and rtl_airband serial= match the SN: line from rtl_test -t. With one
+# dongle always use index 0; with two or more use the preferred EEPROM serial.
 
 list_rtl_devices() {
   for device in "$SYSFS_ROOT"/*; do
@@ -36,7 +38,7 @@ fi
 
 has_serial() {
   wanted=$1
-  printf '%s\n' "$devices" | awk -v wanted="$wanted" '$0 == wanted { found=1 } END { exit !found }'
+  printf '%s\n' "$devices" | awk -v wanted="$wanted" '$0 == wanted { n++ } END { exit !(n == 1) }'
 }
 
 case "${1:-}" in
@@ -45,7 +47,8 @@ case "${1:-}" in
       printf '0\n'
       exit 0
     fi
-    if [ "$count" -gt 1 ] && has_serial "$PREFERRED_ADSB_SERIAL"; then
+    if [ "$count" -gt 1 ] && [ "$PREFERRED_ADSB_SERIAL" != "$VHF_SERIAL" ] \
+        && has_serial "$PREFERRED_ADSB_SERIAL"; then
       printf '%s\n' "$PREFERRED_ADSB_SERIAL"
       exit 0
     fi
@@ -58,7 +61,8 @@ case "${1:-}" in
       printf '%s\n' "$devices" | awk '{ print; exit }'
       exit 0
     fi
-    if [ "$count" -gt 1 ] && has_serial "$PREFERRED_ADSB_SERIAL"; then
+    if [ "$count" -gt 1 ] && [ "$PREFERRED_ADSB_SERIAL" != "$VHF_SERIAL" ] \
+        && has_serial "$PREFERRED_ADSB_SERIAL"; then
       printf '%s\n' "$PREFERRED_ADSB_SERIAL"
       exit 0
     fi
@@ -67,7 +71,9 @@ case "${1:-}" in
     ;;
   vhf-available)
     [ "$count" -ge 2 ] || exit 1
-    has_serial "$VHF_SERIAL"
+    [ "$PREFERRED_ADSB_SERIAL" != "$VHF_SERIAL" ] || exit 1
+    has_serial "$VHF_SERIAL" || exit 1
+    has_serial "$PREFERRED_ADSB_SERIAL"
     ;;
   count)
     printf '%s\n' "$count"

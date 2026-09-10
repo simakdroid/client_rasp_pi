@@ -2,21 +2,15 @@
   "use strict";
 
   /*
-   * Ожидаемый протокол /ws/aircraft:
-   *   {"type":"snapshot","aircraft":[Aircraft, ...],"archived":[Aircraft, ...]};
-   *   {"type":"heartbeat"}                           — keepalive при тихом эфире;
-   *   {"type":"upsert","aircraft":Aircraft}          — новый/изменённый борт;
-   *   {"type":"remove","icao":"ABC123"}              — удалить борт.
-   * Для совместимости snapshot может быть массивом, а delta — объектом
-   * {"type":"delta","upsert":[...], "remove":["ABC123", ...],
-   *  "archive":[Aircraft, ...], "archive_remove":["abc123-1", ...]}.
-   * Элемент upsert может содержать track_append с новыми точками вместо полной
-   * истории. Aircraft обязан содержать icao (или hex), lat, lon; остальные
-   * используемые поля необязательны: callsign, altitude/alt_baro,
-   * speed/ground_speed, squawk, track/heading, distance, azimuth_deg,
-   * trail/positions
-   * (массив точек [lat, lon] или {lat, lon}), type_code/t, type_desc/desc,
-   * category, lost_at, started_at для архива.
+   * Протокол /ws/aircraft:
+   *   snapshot {generation, seq, aircraft, archived} — полная замена состояния;
+   *   delta {generation, seq, upsert, remove, archive, archive_remove};
+    *   resync — переподключить сокет, не смешивать REST со живыми дельтами;
+   *   heartbeat — keepalive.
+   * Дельты принимаются только после snapshot (состояние LIVE).
+   * Дельты с seq <= текущего игнорируются; разрыв seq или смена generation
+   * вызывает повторный snapshot через новое WebSocket-соединение.
+   * upsert.track_append дополняет трек; точки с тем же timestamp не дублируются.
    */
 
   const state = {
@@ -48,14 +42,56 @@
     journalMode: "decoded",
     journalEvents: [],
     lastEventId: 0,
+    eventGeneration: null,
+    geofenceEvents: [],
+    lastGeofenceId: 0,
+    geofenceGeneration: null,
+    geofenceJournalEpoch: 0,
     rawMessages: [],
     lastRawId: 0,
+    rawGeneration: null,
     typeCatalog: new Map(),
+    typeCatalogVersion: -1,
+    typeCatalogError: "",
+    decodedJournalEpoch: 0,
+    rawJournalEpoch: 0,
+    journalTruncated: false,
+    radioChannels: [],
+    playingChannelId: null,
+    playingChannelName: "",
+    radioPlayback: "idle",
+    radioError: "",
+    journalError: "",
+    listCards: new Map(),
+    archiveCards: new Map(),
+    aircraftRenderFrame: 0,
+    layerCatalogVersion: -1,
+    syncGeneration: null,
+    syncSeq: 0,
+    syncMode: "syncing",
+    resyncing: false,
   };
 
   const el = {};
   const byId = (id) => document.getElementById(id);
-  const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  const ADMIN_TOKEN_KEY = "airmon-admin-token";
+  const finite = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "boolean" || typeof value === "object") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+  const inRange = (value, min, max) => {
+    const number = finite(value);
+    return number !== null && number >= min && number <= max ? number : null;
+  };
+  const latNum = (value) => inRange(value, -90, 90);
+  const lonNum = (value) => inRange(value, -180, 180);
+  const plainTooltip = (value) => {
+    const node = document.createElement("span");
+    node.textContent = String(value);
+    return node;
+  };
   const text = (value, fallback = "—") =>
     value === null || value === undefined || value === "" ? fallback : String(value);
   const normalizeIcao = (aircraft) =>
@@ -84,22 +120,43 @@
     configureStation();
     setRadioAvailable(Boolean(state.config.radio?.enabled));
     createMap();
-    await Promise.allSettled([
-      loadInitialAircraft(),
-      loadJournal(),
-      loadLayers(),
-      loadRadioChannels(),
-      loadCoverage(),
-      loadTypeCatalog(),
-    ]);
     connectAircraftSocket();
     document.addEventListener("visibilitychange", resumeSocketIfVisible);
-    void refreshHealth();
-    window.setInterval(loadRadioChannels, 5000);
-    window.setInterval(refreshHealth, 5000);
-    window.setInterval(loadJournal, 1000);
-    window.setInterval(loadCoverage, 5000);
-    window.setInterval(loadTypeCatalog, 5000);
+    window.setTimeout(() => {
+      if (state.syncMode !== "live") void loadInitialAircraft();
+    }, 2500);
+    const pollRadio = startPolling(loadRadioChannels, 5000);
+    const pollCoverage = startPolling(loadCoverage, 5000);
+    const pollTypes = startPolling(loadTypeCatalog, 5000);
+    const pollJournal = startPolling(loadJournal, 1000);
+    const pollHealth = startPolling(refreshHealth, 5000);
+    const pollLayers = startPolling(loadLayers, 15000);
+    const pollStation = startPolling(loadStationStatus, 5000);
+    void pollLayers();
+    void pollStation();
+    void pollRadio();
+    void pollCoverage();
+    void pollTypes();
+    void pollJournal();
+    void pollHealth();
+    el["reload-radio"].addEventListener("click", () => void pollRadio());
+  }
+
+  function startPolling(task, ms) {
+    let timer = 0;
+    let inflight = false;
+    const run = async () => {
+      if (inflight) return;
+      inflight = true;
+      window.clearTimeout(timer);
+      try {
+        await task();
+      } finally {
+        inflight = false;
+        timer = window.setTimeout(() => { void run(); }, ms);
+      }
+    };
+    return run;
   }
 
   function cacheElements() {
@@ -109,11 +166,15 @@
       "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-coverage",
-      "coverage-visible", "coverage-stats", "reset-coverage",
-      "reload-layers", "reload-radio",
+      "coverage-visible", "coverage-stats", "coverage-caption", "coverage-bands", "coverage-hours", "reset-coverage",
+      "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
       "type-catalog-count", "type-catalog-form", "type-catalog-icao",
-      "type-catalog-type", "type-catalog-desc", "type-catalog-list",
+      "type-catalog-type", "type-catalog-desc", "type-catalog-list", "type-catalog-hint",
+      "station-ready", "station-hint", "station-status", "session-status",
+      "session-start", "session-stop", "session-download", "session-replay",
+      "session-upload", "session-file",
+      "diagnostics-download",
     ].forEach((id) => { el[id] = byId(id); });
   }
 
@@ -135,8 +196,7 @@
       setCoverageVisible(el["coverage-visible"].checked);
     });
     el["reset-coverage"].addEventListener("click", resetCoverage);
-    el["reload-layers"].addEventListener("click", loadLayers);
-    el["reload-radio"].addEventListener("click", loadRadioChannels);
+    el["reload-layers"].addEventListener("click", () => void loadLayers());
     el["clear-journal"].addEventListener("click", clearJournal);
     el["type-catalog-form"].addEventListener("submit", submitTypeCatalog);
     el["type-catalog-icao"].addEventListener("input", () => {
@@ -149,6 +209,14 @@
       const button = event.target.closest("[data-remove-icao]");
       if (button) void removeTypeCatalogEntry(button.dataset.removeIcao);
     });
+    bindRadioAudio();
+    el["session-start"].addEventListener("click", () => void controlSession("start"));
+    el["session-stop"].addEventListener("click", () => void controlSession("stop"));
+    el["session-download"].addEventListener("click", () => void downloadSession());
+    el["session-replay"].addEventListener("click", () => void replaySession());
+    el["session-upload"].addEventListener("click", () => el["session-file"].click());
+    el["session-file"].addEventListener("change", () => void uploadSessionFile());
+    el["diagnostics-download"].addEventListener("click", () => void downloadDiagnostics());
     document.querySelectorAll("[data-journal-mode]").forEach((button) => {
       button.addEventListener("click", () => {
         state.journalMode = button.dataset.journalMode;
@@ -185,8 +253,8 @@
   function configureStation() {
     const mapConfig = state.config.map || {};
     const station = state.config.station || {};
-    const lat = finite(station.lat ?? state.config.station_lat ?? mapConfig.center?.[0]);
-    const lon = finite(station.lon ?? state.config.station_lon ?? mapConfig.center?.[1]);
+    const lat = latNum(station.lat ?? state.config.station_lat ?? mapConfig.center?.[0]);
+    const lon = lonNum(station.lon ?? state.config.station_lon ?? mapConfig.center?.[1]);
     state.station = lat !== null && lon !== null ? { lat, lon } : null;
     el["station-name"].textContent = text(
       station.name ?? state.config.station_name,
@@ -223,7 +291,7 @@
         fillColor: "#36b7ff",
         fillOpacity: .35,
         interactive: false,
-      }).addTo(state.map).bindTooltip(el["station-name"].textContent, {
+      }).addTo(state.map).bindTooltip(plainTooltip(el["station-name"].textContent), {
         permanent: false,
         direction: "bottom",
         className: "aircraft-tooltip",
@@ -264,29 +332,79 @@
   }
 
   async function loadInitialAircraft() {
+    if (state.syncMode === "live") return;
+    const socketState = state.socket?.readyState;
+    if (socketState === WebSocket.OPEN || socketState === WebSocket.CONNECTING) return;
     try {
       const payload = await fetchJson("/api/aircraft");
-      const aircraft = Array.isArray(payload) ? payload : (payload.aircraft || []);
-      replaceAircraft(aircraft, payload.archived || []);
+      if (state.syncMode === "live") return;
+      applySnapshot(payload);
     } catch (error) {
       console.error("Ошибка начальной загрузки бортов:", error);
-      setConnection("offline", "Начальные данные недоступны");
+      if (state.syncMode !== "live") {
+        setConnection("offline", "Начальные данные недоступны");
+      }
     }
   }
 
   function replaceAircraft(items, archived = []) {
-    const incoming = new Set();
-    items.forEach((aircraft) => {
-      const icao = normalizeIcao(aircraft);
-      if (!icao) return;
-      incoming.add(icao);
+    [...state.aircraft.keys()].forEach((icao) => removeAircraft(icao, false));
+    (Array.isArray(items) ? items : []).forEach((aircraft) => {
       upsertAircraft(aircraft, false);
-    });
-    [...state.aircraft.keys()].forEach((icao) => {
-      if (!incoming.has(icao)) removeAircraft(icao, false);
     });
     replaceArchive(Array.isArray(archived) ? archived : []);
     finishAircraftUpdate();
+  }
+
+  function applySnapshot(message) {
+    if (!message || typeof message !== "object") return false;
+    const generation = text(message.generation, "");
+    const seq = finite(message.seq) ?? 0;
+    if (
+      state.syncGeneration
+      && generation
+      && generation === state.syncGeneration
+      && seq < state.syncSeq
+    ) {
+      return false;
+    }
+    if (
+      state.syncMode === "live"
+      && generation
+      && generation === state.syncGeneration
+      && seq === state.syncSeq
+    ) {
+      return false;
+    }
+    replaceAircraft(message.aircraft || [], message.archived || []);
+    if (generation) state.syncGeneration = generation;
+    state.syncSeq = seq;
+    state.syncMode = "live";
+    state.resyncing = false;
+    setConnection("online", "В реальном времени");
+    return true;
+  }
+
+  function trackLimit() {
+    return finite(state.config.track_max_points) ?? 300;
+  }
+
+  function mergeTrackPoints(baseTrack, appends) {
+    const track = Array.isArray(baseTrack) ? [...baseTrack] : [];
+    const seen = new Set(
+      track.map((point) => (Array.isArray(point) ? point[3] : point?.timestamp)).filter(Boolean),
+    );
+    (Array.isArray(appends) ? appends : []).forEach((point) => {
+      const stamp = Array.isArray(point) ? point[3] : point?.timestamp;
+      if (stamp && seen.has(stamp)) return;
+      if (stamp) seen.add(stamp);
+      track.push(point);
+    });
+    return track.slice(-trackLimit());
+  }
+
+  function fieldPresent(object, names) {
+    return names.some((name) => Object.prototype.hasOwnProperty.call(object, name));
   }
 
   function archiveKey(aircraft) {
@@ -315,32 +433,45 @@
     if (!icao) return;
 
     const previous = state.aircraft.get(icao) || {};
-    const incomingLat = finite(aircraft.lat ?? aircraft.latitude);
-    const incomingLon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    const merged = { ...previous, ...aircraft, icao };
-    if (incomingLat === null) {
-      merged.lat = finite(previous.lat ?? previous.latitude);
+    const incomingId = text(aircraft.contact_id, "");
+    const previousId = text(previous.contact_id, "");
+    const resetContact = Boolean(incomingId && previousId && incomingId !== previousId);
+    const incomingRev = finite(aircraft.revision);
+    const previousRev = finite(previous.revision);
+    if (!resetContact && incomingRev !== null && previousRev !== null && incomingRev < previousRev) {
+      return;
     }
-    if (incomingLon === null) {
-      merged.lon = finite(previous.lon ?? previous.lng ?? previous.longitude);
+    const base = resetContact ? {} : previous;
+    const incomingLat = latNum(aircraft.lat ?? aircraft.latitude);
+    const incomingLon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const merged = { ...base, ...aircraft, icao };
+    if (!fieldPresent(aircraft, ["lat", "latitude"])) {
+      merged.lat = latNum(base.lat ?? base.latitude);
+    } else {
+      merged.lat = incomingLat;
     }
-    if (Array.isArray(aircraft.track_append)) {
-      const track = Array.isArray(previous.track) ? [...previous.track] : [];
-      aircraft.track_append.forEach((point) => {
-        const last = track[track.length - 1];
-        const sameTimestamp = Array.isArray(last) && Array.isArray(point) &&
-          last[3] !== undefined && last[3] === point[3];
-        if (!sameTimestamp) track.push(point);
-      });
-      merged.track = track.slice(-500);
+    if (!fieldPresent(aircraft, ["lon", "lng", "longitude"])) {
+      merged.lon = lonNum(base.lon ?? base.lng ?? base.longitude);
+    } else {
+      merged.lon = incomingLon;
+    }
+    if (Array.isArray(aircraft.track) || Array.isArray(aircraft.track_append)) {
+      const baseTrack = Array.isArray(aircraft.track)
+        ? aircraft.track
+        : (resetContact ? [] : base.track);
+      merged.track = mergeTrackPoints(baseTrack, aircraft.track_append);
+    } else if (resetContact) {
+      merged.track = [];
     }
     state.aircraft.set(icao, merged);
 
-    const lat = finite(merged.lat ?? merged.latitude);
-    const lon = finite(merged.lon ?? merged.lng ?? merged.longitude);
+    const lat = latNum(merged.lat ?? merged.latitude);
+    const lon = lonNum(merged.lon ?? merged.lng ?? merged.longitude);
     if (lat !== null && lon !== null) {
       updateMarker(merged, lat, lon);
       updateTrack(merged);
+    } else {
+      removeMapObjects(icao);
     }
     if (render) finishAircraftUpdate();
   }
@@ -390,8 +521,12 @@
   }
 
   function finishAircraftUpdate() {
-    renderAircraftList();
-    revealAircraftOnMap();
+    if (state.aircraftRenderFrame) return;
+    state.aircraftRenderFrame = window.requestAnimationFrame(() => {
+      state.aircraftRenderFrame = 0;
+      renderAircraftList();
+      revealAircraftOnMap();
+    });
   }
 
   function updateMarker(aircraft, lat, lon) {
@@ -399,7 +534,7 @@
     const altitude = aircraftAltitude(aircraft);
     const color = altitudeColor(altitude);
     const rotation = finite(
-      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.heading,
+      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.true_heading_deg ?? aircraft.heading,
     ) ?? 0;
     let marker = state.markers.get(icao);
     const icon = aircraftIcon(color, rotation);
@@ -414,12 +549,17 @@
       marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft));
       marker.bindPopup(createTooltip(aircraft), { className: "aircraft-tooltip" });
       state.markers.set(icao, marker);
+      marker._airmonStamp = "";
     } else {
-      marker.setLatLng([lat, lon]);
-      marker.setIcon(icon);
-      marker.setTooltipContent(createDataBlock(aircraft));
-      marker.setPopupContent(createTooltip(aircraft));
-      marker.setZIndexOffset(Math.round(altitude || 0));
+      const stamp = `${lat.toFixed(5)}|${lon.toFixed(5)}|${color}|${rotation}|${text(aircraft.callsign, "")}|${text(aircraft.sector, "")}|${aircraftTypeCode(aircraft)}|${aircraft.revision || ""}`;
+      if (marker._airmonStamp !== stamp) {
+        marker.setLatLng([lat, lon]);
+        marker.setIcon(icon);
+        marker.setTooltipContent(createDataBlock(aircraft));
+        marker.setPopupContent(createTooltip(aircraft));
+        marker.setZIndexOffset(Math.round(altitude || 0));
+        marker._airmonStamp = stamp;
+      }
       marker.getTooltip()?.getElement()?.classList.toggle(
         "is-selected",
         icao === state.selectedIcao,
@@ -429,8 +569,8 @@
 
   function updateArchiveMarker(aircraft) {
     const key = archiveKey(aircraft);
-    const lat = finite(aircraft.lat ?? aircraft.latitude);
-    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const lat = latNum(aircraft.lat ?? aircraft.latitude);
+    const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     const existing = state.archiveMarkers.get(key);
     if (lat === null || lon === null) {
       if (existing) state.map.removeLayer(existing);
@@ -439,7 +579,7 @@
     }
     const altitude = aircraftAltitude(aircraft);
     const rotation = finite(
-      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.heading,
+      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.true_heading_deg ?? aircraft.heading,
     ) ?? 0;
     const icon = aircraftIcon(altitudeColor(altitude), rotation, true);
     if (!existing) {
@@ -502,7 +642,6 @@
       root.append(typeLine);
     }
 
-    const altitude = aircraftAltitude(aircraft);
     const verticalRate = finite(
       aircraft.vertical_rate_fpm ?? aircraft.baro_rate ?? aircraft.vert_rate,
     );
@@ -512,7 +651,7 @@
     const speed = aircraftSpeed(aircraft);
     const motion = document.createElement("div");
     motion.className = "aircraft-label__line";
-    motion.textContent = `${aircraft.on_ground ? "GND" : formatBlockAltitude(altitude)}${trend}${
+    motion.textContent = `${aircraft.on_ground ? "GND" : formatBlockAltitude(aircraft)}${trend}${
       speed === null ? "" : ` ${String(Math.round(speed)).padStart(3, "0")}`
     }`;
     root.append(motion);
@@ -550,7 +689,7 @@
     const rows = [
       ["Рейс", text(aircraft.callsign, "без позывного")],
       ["Тип ВС", formatAircraftType(aircraft) || "не определён"],
-      ["Высота", formatAltitude(aircraftAltitude(aircraft))],
+      ["Высота", formatAltitude(aircraftAltitude(aircraft), aircraft.altitude_reference)],
       ["Скорость", formatSpeed(aircraftSpeed(aircraft))],
       ["Код ответчика", text(aircraft.squawk)],
       ["Положение", formatPosition(aircraft)],
@@ -602,8 +741,8 @@
   function normalizeTrail(trail) {
     if (!Array.isArray(trail)) return [];
     return trail.map((point) => {
-      if (Array.isArray(point)) return [finite(point[0]), finite(point[1])];
-      return [finite(point?.lat ?? point?.latitude), finite(point?.lon ?? point?.lng ?? point?.longitude)];
+      if (Array.isArray(point)) return [latNum(point[0]), lonNum(point[1])];
+      return [latNum(point?.lat ?? point?.latitude), lonNum(point?.lon ?? point?.lng ?? point?.longitude)];
     }).filter(([lat, lon]) => lat !== null && lon !== null);
   }
 
@@ -636,7 +775,7 @@
       const payload = await fetchJson("/api/coverage");
       renderCoverage(payload);
     } catch (error) {
-      console.warn("Ошибка загрузки розы покрытия:", error);
+      setCoverageStatus(`Не удалось загрузить розу покрытия: ${error.message}`, true);
     }
   }
 
@@ -647,16 +786,28 @@
       state.coverageRevision = -1;
       renderCoverage(payload);
     } catch (error) {
-      console.warn("Не удалось сбросить розу покрытия:", error);
+      setCoverageStatus(`Не удалось сбросить розу покрытия: ${error.message}`, true);
     }
   }
 
+  function setCoverageStatus(stats, isError = false) {
+    if (!el["coverage-stats"]) return;
+    el["coverage-stats"].textContent = stats;
+    el["coverage-stats"].classList.toggle("error-state", Boolean(isError));
+  }
+
   function renderCoverage(payload) {
-    const stats = formatCoverageStats(payload);
-    if (el["coverage-stats"]) el["coverage-stats"].textContent = stats;
+    const persistError = Boolean(payload?.load_error || payload?.save_error);
+    if (el["coverage-caption"]) {
+      el["coverage-caption"].textContent =
+        payload?.caption || "Исторический максимум дальности, не гарантированная зона приёма.";
+    }
+    setCoverageStatus(formatCoverageStats(payload), persistError);
+    renderCoverageBreakdown(el["coverage-bands"], payload?.altitude_bands, "пояса");
+    renderCoverageBreakdown(el["coverage-hours"], payload?.hourly, "часы");
     const revision = finite(payload?.revision) ?? 0;
     const points = Array.isArray(payload?.points) ? payload.points.filter((point) => (
-      Array.isArray(point) && finite(point[0]) !== null && finite(point[1]) !== null
+      Array.isArray(point) && latNum(point[0]) !== null && lonNum(point[1]) !== null
     )) : [];
     if (revision === state.coverageRevision && state.coverageLayer) return;
     state.coverageRevision = revision;
@@ -687,8 +838,12 @@
     const samples = finite(payload?.samples) ?? 0;
     const filled = finite(payload?.filled_bins) ?? 0;
     const maxRange = finite(payload?.max_range_km);
-    if (!samples) return "Накопление начнётся с первым бортом.";
+    if (!samples && !(finite(payload?.observations) > 0)) {
+      return "Накопление начнётся с первым бортом.";
+    }
     const rangeText = maxRange === null ? "—" : formatDistance(maxRange);
+    const observations = finite(payload?.observations) ?? samples;
+    const updates = finite(payload?.range_updates) ?? samples;
     let started = "";
     if (payload?.started_at) {
       const date = new Date(payload.started_at);
@@ -700,7 +855,31 @@
         })} ${formatUtcTime(date)} UTC`;
       }
     }
-    return `Макс. ${rangeText} · ${filled} из 360 направлений · ${samples} точек${started}`;
+    return `макс. ${rangeText} · ${filled} из 360 направлений · ${updates} обновлений максимума · ${observations} наблюдений${started}${persistHint(payload)}`;
+  }
+
+  function renderCoverageBreakdown(node, rows, kind) {
+    if (!node) return;
+    const items = Array.isArray(rows) ? rows.filter((row) => (row.observations || 0) > 0) : [];
+    node.hidden = items.length === 0;
+    node.replaceChildren();
+    items.forEach((row) => {
+      const item = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = row.label || row.hour || row.id || kind;
+      const value = document.createElement("span");
+      const range = finite(row.max_range_km);
+      value.textContent = `${row.observations || 0} набл. · ${range === null ? "—" : formatDistance(range)}`;
+      item.append(label, value);
+      node.append(item);
+    });
+  }
+
+  function persistHint(payload) {
+    const notes = [];
+    if (payload?.load_error) notes.push("файл покрытия повреждён, начато заново");
+    if (payload?.save_error) notes.push(`не сохранено: ${payload.save_error}`);
+    return notes.length ? ` · ${notes.join(" · ")}` : "";
   }
 
   function fitAircraft() {
@@ -738,8 +917,8 @@
   function refreshAircraftMarker(icao) {
     const live = state.aircraft.get(icao);
     if (live) {
-      const lat = finite(live.lat ?? live.latitude);
-      const lon = finite(live.lon ?? live.lng ?? live.longitude);
+      const lat = latNum(live.lat ?? live.latitude);
+      const lon = lonNum(live.lon ?? live.lng ?? live.longitude);
       if (lat !== null && lon !== null) updateMarker(live, lat, lon);
       return;
     }
@@ -755,9 +934,27 @@
     return !state.search || haystack.includes(state.search);
   }
 
+  const LIST_LIMIT = 80;
+
   function fillAircraftCard(aircraft, archived = false) {
     const card = byId("aircraft-card-template").content.firstElementChild.cloneNode(true);
+    card.addEventListener("click", () => {
+      selectAircraft(selectionKey(aircraftFromCard(card), archived));
+    });
+    updateAircraftCard(card, aircraft, archived);
+    return card;
+  }
+
+  function aircraftFromCard(card) {
+    if (card.dataset.key && state.archived.has(card.dataset.key)) {
+      return state.archived.get(card.dataset.key);
+    }
+    return state.aircraft.get(card.dataset.icao) || { icao: card.dataset.icao };
+  }
+
+  function updateAircraftCard(card, aircraft, archived = false) {
     card.dataset.icao = aircraft.icao;
+    if (archived) card.dataset.key = archiveKey(aircraft);
     card.classList.toggle("is-selected", state.selectedIcao === selectionKey(aircraft, archived));
     card.classList.toggle("is-archived", archived);
     card.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
@@ -772,7 +969,7 @@
     typeNode.classList.toggle("is-unknown", !typeLabel);
     const altitude = aircraftAltitude(aircraft);
     card.querySelector('[data-metric="altitude"]').textContent =
-      altitude === null ? "не определена" : formatAltitude(altitude);
+      altitude === null ? "не определена" : formatAltitude(altitude, aircraft.altitude_reference);
     card.querySelector('[data-metric="speed"]').textContent = formatSpeed(aircraftSpeed(aircraft));
     card.querySelector('[data-metric="position"]').textContent = formatPosition(aircraft);
     const squawk = text(aircraft.squawk, "").trim();
@@ -784,10 +981,35 @@
       lostRow.hidden = false;
       card.querySelector('[data-metric="lost"]').textContent =
         formatContactTime(aircraft.lost_at);
+    } else {
+      lostRow.hidden = true;
     }
     card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
-    card.addEventListener("click", () => selectAircraft(selectionKey(aircraft, archived)));
-    return card;
+  }
+
+  function syncCardList(list, items, cards, keyOf, archived) {
+    if (list.querySelector(".empty-state") && !list.querySelector(".aircraft-card")) {
+      list.replaceChildren();
+    }
+    const seen = new Set();
+    items.forEach((aircraft, index) => {
+      const key = keyOf(aircraft);
+      seen.add(key);
+      let card = cards.get(key);
+      if (!card) {
+        card = fillAircraftCard(aircraft, archived);
+        cards.set(key, card);
+      } else {
+        updateAircraftCard(card, aircraft, archived);
+      }
+      const current = list.children[index];
+      if (current !== card) list.insertBefore(card, current || null);
+    });
+    [...cards.keys()].forEach((key) => {
+      if (seen.has(key)) return;
+      cards.get(key)?.remove();
+      cards.delete(key);
+    });
   }
 
   function replaceKeepingScroll(list, node) {
@@ -797,7 +1019,6 @@
   }
 
   function renderAircraftList() {
-    const fragment = document.createDocumentFragment();
     const items = [...state.aircraft.values()]
       .filter(matchesSearch)
       .sort((a, b) => {
@@ -806,13 +1027,25 @@
         return (da ?? Infinity) - (db ?? Infinity) ||
           text(a.callsign, a.icao).localeCompare(text(b.callsign, b.icao));
       });
-
-    items.forEach((aircraft) => fragment.append(fillAircraftCard(aircraft)));
-    replaceKeepingScroll(
-      el["aircraft-list"],
-      fragment.childNodes.length ? fragment : emptyNode(state.search ? "Ничего не найдено" : "Нет активных бортов"),
-    );
     el["visible-count"].textContent = String(items.length);
+    const shown = items.slice(0, LIST_LIMIT);
+    if (!shown.length) {
+      state.listCards.clear();
+      replaceKeepingScroll(
+        el["aircraft-list"],
+        emptyNode(state.search ? "Ничего не найдено" : "Нет активных бортов"),
+      );
+    } else {
+      syncCardList(el["aircraft-list"], shown, state.listCards, (item) => item.icao, false);
+      const extra = el["aircraft-list"].querySelector(".list-overflow");
+      extra?.remove();
+      if (items.length > shown.length) {
+        const note = document.createElement("p");
+        note.className = "empty-state list-overflow";
+        note.textContent = `Показаны ближайшие ${shown.length} из ${items.length}`;
+        el["aircraft-list"].append(note);
+      }
+    }
     renderArchiveList();
   }
 
@@ -823,13 +1056,32 @@
       state.typeCatalog = new Map(
         (payload.types || []).map((entry) => [text(entry.icao, "").toUpperCase(), entry]),
       );
+      state.typeCatalogVersion = finite(payload.version) ?? state.typeCatalogVersion;
+      setTypeCatalogStatus("");
     } catch (error) {
-      console.warn("Не удалось загрузить справочник типов ВС.", error);
-      state.typeCatalog = new Map();
+      setTypeCatalogStatus(`Не удалось загрузить справочник типов: ${error.message}`);
     }
     if (typeCatalogSignature() === previous) return;
     renderTypeCatalog();
     renderAircraftList();
+    refreshAircraftMarkers();
+  }
+
+  function setTypeCatalogStatus(message) {
+    state.typeCatalogError = message || "";
+    if (!el["type-catalog-hint"]) return;
+    el["type-catalog-hint"].textContent = state.typeCatalogError ||
+      "Если ADS-B не дал тип, подставляется запись по 24-битному адресу. Хранится в JSON, без базы.";
+    el["type-catalog-hint"].classList.toggle("error-state", Boolean(state.typeCatalogError));
+  }
+
+  function refreshAircraftMarkers() {
+    state.aircraft.forEach((aircraft) => {
+      const lat = latNum(aircraft.lat ?? aircraft.latitude);
+      const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+      if (lat !== null && lon !== null) updateMarker(aircraft, lat, lon);
+    });
+    state.archived.forEach((aircraft) => updateArchiveMarker(aircraft));
   }
 
   function typeCatalogSignature() {
@@ -886,10 +1138,13 @@
       state.typeCatalog.set(text(entry.icao, icao).toUpperCase(), entry);
       el["type-catalog-form"].reset();
       el["type-catalog-icao"].focus();
+      setTypeCatalogStatus("");
       renderTypeCatalog();
       renderAircraftList();
+      renderArchiveList();
+      refreshAircraftMarkers();
     } catch (error) {
-      console.warn("Не удалось сохранить тип ВС.", error);
+      setTypeCatalogStatus(`Не удалось сохранить тип ВС: ${error.message}`);
     }
   }
 
@@ -897,19 +1152,17 @@
     const key = text(icao, "").toUpperCase();
     if (!key) return;
     try {
-      const response = await fetch(`/api/aircraft-types/${encodeURIComponent(key)}`, {
+      await fetchJson(`/api/aircraft-types/${encodeURIComponent(key)}`, {
         method: "DELETE",
-        headers: { Accept: "application/json" },
-        cache: "no-store",
       });
-      if (!response.ok && response.status !== 404) {
-        throw new Error(`${response.status} ${response.statusText}`);
-      }
       state.typeCatalog.delete(key);
+      setTypeCatalogStatus("");
       renderTypeCatalog();
       renderAircraftList();
+      renderArchiveList();
+      refreshAircraftMarkers();
     } catch (error) {
-      console.warn("Не удалось удалить тип ВС.", error);
+      setTypeCatalogStatus(`Не удалось удалить тип ВС: ${error.message}`);
     }
   }
 
@@ -918,19 +1171,17 @@
       .filter(matchesSearch)
       .sort((a, b) => text(b.lost_at, "").localeCompare(text(a.lost_at, "")));
     el["archive-section"].hidden = items.length === 0 && !state.search;
+    el["archive-count"].textContent = String(items.length);
     if (!items.length) {
+      state.archiveCards.clear();
       replaceKeepingScroll(
         el["archive-list"],
         emptyNode(state.search && state.archived.size ? "Ничего не найдено в архиве" : "Архив пуст"),
       );
-      el["archive-count"].textContent = "0";
       if (!state.archived.size) el["archive-section"].hidden = true;
       return;
     }
-    const fragment = document.createDocumentFragment();
-    items.forEach((aircraft) => fragment.append(fillAircraftCard(aircraft, true)));
-    replaceKeepingScroll(el["archive-list"], fragment);
-    el["archive-count"].textContent = String(items.length);
+    syncCardList(el["archive-list"], items.slice(0, LIST_LIMIT), state.archiveCards, archiveKey, true);
   }
 
   function aircraftAltitude(aircraft) {
@@ -946,8 +1197,8 @@
   function aircraftDistance(aircraft) {
     const explicit = finite(aircraft.distance ?? aircraft.distance_km);
     if (explicit !== null) return explicit;
-    const lat = finite(aircraft.lat ?? aircraft.latitude);
-    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const lat = latNum(aircraft.lat ?? aircraft.latitude);
+    const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     if (!state.station || lat === null || lon === null) return null;
     return haversineKm(state.station.lat, state.station.lon, lat, lon);
   }
@@ -955,8 +1206,8 @@
   function aircraftAzimuth(aircraft) {
     const explicit = finite(aircraft.azimuth_deg ?? aircraft.azimuth);
     if (explicit !== null) return ((explicit % 360) + 360) % 360;
-    const lat = finite(aircraft.lat ?? aircraft.latitude);
-    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const lat = latNum(aircraft.lat ?? aircraft.latitude);
+    const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     if (!state.station || lat === null || lon === null) return null;
     return initialBearingDeg(state.station.lat, state.station.lon, lat, lon);
   }
@@ -1040,7 +1291,17 @@
     return "#ff6f91";
   }
 
-  const formatAltitude = (value) => value === null ? "—" : `${Math.round(value).toLocaleString("ru-RU")} ft`;
+  const formatAltitude = (value, reference) => {
+    if (value === null) return "—";
+    const feet = `${Math.round(value).toLocaleString("ru-RU")} ft`;
+    const source = altitudeReferenceLabel(reference);
+    return source ? `${feet} (${source})` : feet;
+  };
+  const altitudeReferenceLabel = (reference) => {
+    if (reference === "baro") return "баро";
+    if (reference === "geom") return "геом";
+    return "";
+  };
   const formatSpeed = (value) => value === null ? "—" : `${Math.round(value)} kt`;
   const formatAzimuth = (value) => {
     if (value === null) return "";
@@ -1049,8 +1310,8 @@
   };
   const formatDistance = (value) => value === null ? "—" : `${value < 10 ? value.toFixed(1) : Math.round(value)} км`;
   function formatPosition(aircraft) {
-    const lat = finite(aircraft.lat ?? aircraft.latitude);
-    const lon = finite(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const lat = latNum(aircraft.lat ?? aircraft.latitude);
+    const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
     if (lat === null || lon === null) return "нет координат";
     const parts = [];
     const azimuth = formatAzimuth(aircraftAzimuth(aircraft));
@@ -1085,10 +1346,14 @@
     }
     return aircraft.updated_at || null;
   }
-  const formatBlockAltitude = (value) => {
+  const formatBlockAltitude = (aircraft) => {
+    const value = aircraftAltitude(aircraft);
     if (value === null) return "---";
     const hundreds = String(Math.max(0, Math.round(value / 100))).padStart(3, "0");
-    return `${value >= 5000 ? "F" : "A"}${hundreds}`;
+    const mark = aircraft.altitude_reference === "geom"
+      ? "г"
+      : aircraft.altitude_reference === "baro" ? "б" : "";
+    return mark ? `${hundreds}${mark}` : hundreds;
   };
 
   function haversineKm(lat1, lon1, lat2, lon2) {
@@ -1160,6 +1425,7 @@
     clearTimeout(state.reconnectTimer);
     state.reconnectTimer = null;
     discardSocket();
+    state.syncMode = "syncing";
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = state.config.aircraft_ws_url ||
       `${protocol}//${location.host}/ws/aircraft`;
@@ -1175,7 +1441,7 @@
     state.socket.addEventListener("open", () => {
       state.reconnectAttempt = 0;
       startSocketTimers();
-      setConnection("online", "В реальном времени");
+      setConnection("connecting", "Синхронизация…");
       void refreshHealth();
     });
     state.socket.addEventListener("message", (event) => {
@@ -1199,11 +1465,11 @@
       return;
     }
     if (message.type === "snapshot") {
-      replaceAircraft(message.aircraft || [], message.archived || []);
+      applySnapshot(message);
       return;
     }
     if (message.type === "resync") {
-      void loadInitialAircraft();
+      requestStreamResync();
       return;
     }
     if (message.type === "upsert" && message.aircraft) {
@@ -1215,19 +1481,48 @@
       return;
     }
     if (Array.isArray(message.upsert) || Array.isArray(message.remove) || Array.isArray(message.archive)) {
-      (message.upsert || []).forEach((aircraft) => upsertAircraft(aircraft, false));
-      const archivedIcaos = new Set(
-        (message.archive || []).map((aircraft) => normalizeIcao(aircraft)).filter(Boolean),
-      );
-      (message.archive_remove || []).forEach((key) => dropArchive(key, false));
-      (message.archive || []).forEach((aircraft) => archiveAircraft(aircraft, false));
-      (message.remove || []).forEach((icao) => {
-        if (!archivedIcaos.has(text(icao, "").toUpperCase())) {
-          removeAircraft(icao, false);
-        }
-      });
-      finishAircraftUpdate();
+      applyDelta(message);
     }
+  }
+
+  function applyDelta(message) {
+    if (state.syncMode !== "live") return;
+    const generation = text(message.generation, "");
+    const seq = finite(message.seq);
+    if (generation && state.syncGeneration && generation !== state.syncGeneration) {
+      requestStreamResync();
+      return;
+    }
+    if (seq != null && state.syncMode === "live") {
+      if (seq <= state.syncSeq) return;
+      if (seq > state.syncSeq + 1) {
+        requestStreamResync();
+        return;
+      }
+    }
+    (message.upsert || []).forEach((aircraft) => upsertAircraft(aircraft, false));
+    const archivedIcaos = new Set(
+      (message.archive || []).map((aircraft) => normalizeIcao(aircraft)).filter(Boolean),
+    );
+    (message.archive_remove || []).forEach((key) => dropArchive(key, false));
+    (message.archive || []).forEach((aircraft) => archiveAircraft(aircraft, false));
+    (message.remove || []).forEach((icao) => {
+      if (!archivedIcaos.has(text(icao, "").toUpperCase())) {
+        removeAircraft(icao, false);
+      }
+    });
+    if (seq != null) state.syncSeq = seq;
+    if (generation) state.syncGeneration = generation;
+    state.syncMode = "live";
+    finishAircraftUpdate();
+  }
+
+  function requestStreamResync() {
+    if (state.resyncing) return;
+    state.resyncing = true;
+    state.syncMode = "syncing";
+    setConnection("connecting", "Синхронизация…");
+    connectAircraftSocket();
   }
 
   function scheduleReconnect() {
@@ -1259,7 +1554,7 @@
       const adsb = health.adsb || {};
       const wsOpen = state.socket?.readyState === WebSocket.OPEN;
       if (adsb.status === "online") {
-        if (wsOpen) setConnection("online", "ADS-B работает");
+        if (wsOpen && state.syncMode === "live") setConnection("online", "ADS-B работает");
         return;
       }
       const labels = {
@@ -1273,10 +1568,256 @@
     }
   }
 
+  async function loadStationStatus() {
+    if (!el["station-status"]) return;
+    try {
+      const payload = await fetchJson("/api/station");
+      renderStationStatus(payload);
+    } catch (error) {
+      if (el["station-hint"]) {
+        el["station-hint"].textContent = `Не удалось получить состояние станции: ${error.message}`;
+        el["station-hint"].classList.add("error-state");
+      }
+    }
+  }
+
+  function renderStationStatus(payload) {
+    const ready = payload.ready === true;
+    el["station-ready"].textContent = ready ? "готово" : "нет";
+    el["station-hint"].classList.remove("error-state");
+    el["station-hint"].textContent =
+      "Источники, задачи, SDR, диск и ошибки слоёв. Запись сессии — по запросу, не архив за неделю.";
+    const adsb = payload.adsb || {};
+    const source = payload.source || {};
+    const gis = payload.gis || {};
+    const coverage = payload.coverage || {};
+    const radio = payload.radio || {};
+    const host = payload.host || {};
+    const session = payload.session || {};
+    const tasks = payload.tasks || {};
+    const positions = payload.positions || {};
+    const wrap = el["station-status"];
+    wrap.replaceChildren();
+    appendStationBlock(wrap, "Готовность", [
+      ["Состояние", payload.status || (ready ? "ok" : "degraded")],
+      ["Live / ready", `${payload.live === true ? "live" : "—"} / ${ready ? "ready" : "not ready"}`],
+      ["Последний пакет", payload.last_batch_at ? formatStationTime(payload.last_batch_at) : "—"],
+    ]);
+    appendStationBlock(wrap, "ADS-B", [
+      ["Источник", `${payload.source_mode || "—"} · ${source.status || adsb.status || "—"}`],
+      ["JSON", `${adsb.status || "—"} · возраст ${adsb.json_age_s ?? "—"} с · сообщений ${adsb.messages ?? "—"}`],
+      ["Борта", `${adsb.aircraft ?? positions.live ?? "—"} живых, с позицией ${positions.with_position ?? "—"}`],
+      ["Возраст позиции", formatPositionAge(positions)],
+    ], adsb.status && adsb.status !== "online");
+    appendStationBlock(wrap, "Задачи",
+      Object.keys(tasks).length
+        ? Object.entries(tasks)
+        : [["задачи", "нет"]],
+      Object.values(tasks).some((value) => value && value !== "running"),
+    );
+    appendStationBlock(wrap, "SDR", [
+      ["Роль ADS-B", radio.adsb || "нет"],
+      ["Роль VHF", radio.vhf || "выкл."],
+      ["Serials", (radio.serials || []).join(", ") || "нет приёмников"],
+      ["Дубли serial", radio.duplicate_serials ? "да" : "нет"],
+    ], Boolean(radio.duplicate_serials));
+    appendStationBlock(wrap, "Хост", [
+      ["Диск", host.disk_free_gb != null ? `${host.disk_free_gb} / ${host.disk_total_gb} ГБ свободно` : "—"],
+      ["CPU", host.cpu_temp_c != null ? `${host.cpu_temp_c} °C` : "—"],
+    ]);
+    const gisErrors = Array.isArray(gis.errors) ? gis.errors : [];
+    appendStationBlock(wrap, "GIS", [
+      ["Версия", `v${gis.version ?? 0} · последняя годная v${gis.last_good_version ?? 0}`],
+      ["Загрузка", `${gis.load_ms ?? 0} мс · слоёв ${gis.layer_count ?? 0} · объектов ${gis.feature_count ?? 0} · зон ${gis.geofence_count ?? 0}`],
+      ["Ошибки", gisErrors.length ? gisErrors.map(formatGisError).join("; ") : "нет"],
+    ], gisErrors.length > 0);
+    appendStationBlock(wrap, "Покрытие", [
+      ["Смысл", coverage.caption || "Исторический максимум дальности, не гарантированная зона приёма"],
+      ["Роза", `макс. ${coverage.max_range_km ?? 0} км · ${coverage.filled_bins ?? 0}/360 · набл. ${coverage.observations ?? 0}`],
+      ["Запись", coverage.save_error || coverage.load_error || (coverage.saved ? "сохранено" : "ожидает запись")],
+    ], Boolean(coverage.save_error || coverage.load_error));
+    const vhfChannels = Array.isArray(radio.channels) ? radio.channels : [];
+    appendStationBlock(wrap, "Радио", [
+      ["VHF", radio.enabled ? `каналов ${vhfChannels.length}, активных ${radio.active_channels ?? 0}` : "нет"],
+      ["Уровни", vhfChannels.length ? vhfChannels.map(formatRadioQuality).join("; ") : "—"],
+    ]);
+    renderRadioQualityStrip(payload);
+    if (session.recording) {
+      el["session-status"].textContent =
+        `Идёт запись: ${session.batches || 0} пакетов, ${session.updates || 0} обновлений`;
+    } else if (session.events) {
+      el["session-status"].textContent =
+        `Запись остановлена: ${session.events} пакетов, ${session.updates || 0} обновлений`;
+    } else {
+      el["session-status"].textContent = "Запись выключена.";
+    }
+    el["session-status"].classList.remove("error-state");
+  }
+
+  function appendStationBlock(wrap, title, rows, isError = false) {
+    const block = document.createElement("section");
+    block.className = "station-block";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    const list = document.createElement("dl");
+    list.className = "station-status";
+    rows.forEach(([name, value]) => {
+      const dt = document.createElement("dt");
+      dt.textContent = name;
+      const dd = document.createElement("dd");
+      dd.textContent = value || "—";
+      if (isError) dd.classList.add("is-error");
+      list.append(dt, dd);
+    });
+    block.append(heading, list);
+    wrap.append(block);
+  }
+
+  function formatStationTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : `${formatUtcTime(date)} UTC`;
+  }
+
+  function formatPositionAge(positions) {
+    if (positions.newest_position_age_s == null) return "нет координат";
+    const newest = positions.newest_position_age_s;
+    const oldest = positions.oldest_position_age_s;
+    return `свежее ${newest} с · старше ${oldest} с`;
+  }
+
+  function formatGisError(item) {
+    const id = item.id || "слой";
+    const reason = item.reason || item.error || "ошибка";
+    return item.kept_previous ? `${id}: ${reason} (оставлена предыдущая версия)` : `${id}: ${reason}`;
+  }
+
+  function formatRadioQuality(channel) {
+    const name = channel.name || channel.id || "канал";
+    const level = channel.level_dbfs == null ? "dBFS —" : `${Number(channel.level_dbfs).toFixed(1)} dBFS`;
+    const active = channel.active === true ? "активен" : (channel.active === false ? "тишина" : "н/д");
+    return `${name}: ${level}, ${active}`;
+  }
+
+  function renderRadioQualityStrip(payload) {
+    if (!el["radio-quality"]) return;
+    const adsb = payload.adsb || {};
+    const radio = payload.radio || {};
+    const positions = payload.positions || {};
+    const list = document.createElement("dl");
+    list.className = "quality-strip";
+    const vhfRows = (radio.channels || []).map((channel) => [
+      channel.name || channel.id || "VHF",
+      formatRadioQuality(channel).replace(/^[^:]+:\s*/, ""),
+    ]);
+    [
+      ["ADS-B", `${adsb.status || "—"} · возраст JSON ${adsb.json_age_s ?? "—"} с · бортов ${adsb.aircraft ?? "—"}`],
+      ["Позиции", formatPositionAge(positions)],
+      ["VHF", radio.enabled ? `активных ${radio.active_channels ?? 0} / ${(radio.channels || []).length}` : "приёмник не готов"],
+      ["SDR", `ADS-B ${radio.adsb || "—"} · VHF ${radio.vhf || "выкл."}`],
+      ...vhfRows,
+    ].forEach(([name, value]) => {
+      const row = document.createElement("div");
+      row.className = "quality-strip__row";
+      const dt = document.createElement("dt");
+      dt.textContent = name;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      row.append(dt, dd);
+      list.append(row);
+    });
+    el["radio-quality"].replaceChildren(list);
+  }
+
+  async function controlSession(action) {
+    try {
+      const payload = await fetchJson(`/api/station/session/${action}`, { method: "POST" });
+      el["session-status"].textContent = payload.recording
+        ? "Запись начата."
+        : "Запись остановлена.";
+      void loadStationStatus();
+    } catch (error) {
+      el["session-status"].textContent = `Не удалось изменить запись: ${error.message}`;
+      el["session-status"].classList.add("error-state");
+    }
+  }
+
+  async function downloadSession() {
+    try {
+      const payload = await fetchJson("/api/station/session");
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "adsb-session.json";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      el["session-status"].textContent = `Не удалось скачать сессию: ${error.message}`;
+    }
+  }
+
+  async function downloadDiagnostics() {
+    try {
+      const payload = await fetchJson("/api/station/diagnostics");
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "airmon-diagnostics.json";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      if (el["station-hint"]) {
+        el["station-hint"].textContent = `Не удалось скачать диагностику: ${error.message}`;
+        el["station-hint"].classList.add("error-state");
+      }
+    }
+  }
+
+  async function replaySession() {
+    if (!window.confirm("Воспроизвести последнюю записанную сессию в текущий трекер?")) return;
+    try {
+      const payload = await fetchJson("/api/station/session/replay", { method: "POST" });
+      el["session-status"].textContent =
+        `Воспроизведено обновлений: ${payload.applied || 0}`;
+    } catch (error) {
+      el["session-status"].textContent = `Не удалось воспроизвести: ${error.message}`;
+      el["session-status"].classList.add("error-state");
+    }
+  }
+
+  async function uploadSessionFile() {
+    const input = el["session-file"];
+    const file = input?.files?.[0];
+    if (input) input.value = "";
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const events = Array.isArray(parsed.events) ? parsed.events : parsed;
+      if (!Array.isArray(events) || !events.length) {
+        throw new Error("в файле нет events[]");
+      }
+      if (!window.confirm(`Воспроизвести ${events.length} пакетов из файла в текущий трекер?`)) return;
+      const payload = await fetchJson("/api/station/session/replay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ events }),
+      });
+      el["session-status"].textContent =
+        `Воспроизведено из файла: ${payload.applied || 0} обновлений`;
+      el["session-status"].classList.remove("error-state");
+    } catch (error) {
+      el["session-status"].textContent = `Не удалось загрузить сессию: ${error.message}`;
+      el["session-status"].classList.add("error-state");
+    }
+  }
+
   const JOURNAL_LIMIT = 400;
+  const JOURNAL_CATCHUP_PAGES = 8;
 
   async function loadJournal() {
     if (state.journalMode === "raw") await loadRawMessages();
+    else if (state.journalMode === "geofence") await loadGeofenceEvents();
     else await loadDecodedMessages();
   }
 
@@ -1288,6 +1829,9 @@
 
   async function clearJournal() {
     const rawMode = state.journalMode === "raw";
+    state.decodedJournalEpoch += 1;
+    state.rawJournalEpoch += 1;
+    state.geofenceJournalEpoch += 1;
     try {
       const payload = await fetchJson(
         rawMode ? "/api/adsb/raw/clear" : "/api/adsb/messages/clear",
@@ -1295,88 +1839,208 @@
       );
       if (rawMode) {
         state.rawMessages = [];
-        state.lastRawId = finite(payload.last_id) ?? state.lastRawId;
+        state.lastRawId = 0;
+        if (payload.generation) state.rawGeneration = payload.generation;
       } else {
         state.journalEvents = [];
-        state.lastEventId = finite(payload.last_id) ?? state.lastEventId;
+        state.lastEventId = 0;
+        state.geofenceEvents = [];
+        state.lastGeofenceId = 0;
+        if (payload.generation) {
+          state.eventGeneration = payload.generation;
+          state.geofenceGeneration = payload.generation;
+        }
       }
+      state.journalTruncated = false;
       renderJournal();
     } catch (error) {
-      console.warn("Не удалось очистить журнал на станции:", error);
+      state.journalError = `Не удалось очистить журнал: ${error.message}`;
+      renderJournal();
     }
   }
 
+  function applyJournalGeneration(payload, kind) {
+    const generation = text(payload?.generation, "");
+    if (!generation) return "ok";
+    if (kind === "raw") {
+      if (!state.rawGeneration) {
+        state.rawGeneration = generation;
+        return "ok";
+      }
+      if (state.rawGeneration === generation) return "ok";
+      state.rawGeneration = generation;
+      state.rawMessages = [];
+      state.lastRawId = 0;
+      return "reset";
+    }
+    if (!state.eventGeneration) {
+      state.eventGeneration = generation;
+      return "ok";
+    }
+    if (state.eventGeneration === generation) return "ok";
+    state.eventGeneration = generation;
+    state.journalEvents = [];
+    state.lastEventId = 0;
+    return "reset";
+  }
+
+  function applyGeofenceGeneration(payload) {
+    const generation = text(payload?.generation, "");
+    if (!generation) return "ok";
+    if (!state.geofenceGeneration) {
+      state.geofenceGeneration = generation;
+      return "ok";
+    }
+    if (state.geofenceGeneration === generation) return "ok";
+    state.geofenceGeneration = generation;
+    state.geofenceEvents = [];
+    state.lastGeofenceId = 0;
+    return "reset";
+  }
+
   async function loadDecodedMessages() {
-    try {
-      const payload = await fetchJson(
-        `/api/adsb/messages?after_id=${state.lastEventId}&limit=${JOURNAL_LIMIT}`,
-      );
-      const events = Array.isArray(payload.events) ? payload.events : [];
-      state.lastEventId = Math.max(
-        state.lastEventId,
-        finite(payload.last_id) ?? 0,
-        ...events.map((event) => finite(event.id) ?? 0),
-      );
-      if (events.length) {
-        state.journalEvents = mergeJournalItems(state.journalEvents, events);
-        renderJournal();
-      } else if (!state.journalEvents.length) {
-        renderJournal();
-      }
-    } catch (error) {
-      if (!state.journalEvents.length) {
-        el["journal-list"].replaceChildren(
-          emptyNode("Журнал ADS-B недоступен", true),
+    const fetchId = ++state.decodedJournalEpoch;
+    let afterId = state.lastEventId;
+    for (let page = 0; page < JOURNAL_CATCHUP_PAGES; page += 1) {
+      try {
+        const payload = await fetchJson(
+          `/api/adsb/messages?after_id=${afterId}&limit=${JOURNAL_LIMIT}`,
         );
+        if (fetchId !== state.decodedJournalEpoch) return;
+        const status = applyJournalGeneration(payload, "decoded");
+        if (status === "reset") {
+          afterId = 0;
+          continue;
+        }
+        const events = Array.isArray(payload.events) ? payload.events : [];
+        const cursor = finite(payload.next_after_id);
+        if (cursor !== null) state.lastEventId = cursor;
+        state.journalTruncated = Boolean(payload.truncated);
+        const hadError = Boolean(state.journalError);
+        state.journalError = "";
+        if (events.length) {
+          state.journalEvents = mergeJournalItems(state.journalEvents, events);
+          renderJournal();
+        } else if (!state.journalEvents.length || hadError) {
+          renderJournal();
+        }
+        afterId = state.lastEventId;
+        if (!(payload.has_more && afterId > 0 && payload.mode === "since")) break;
+      } catch (error) {
+        if (fetchId !== state.decodedJournalEpoch) return;
+        state.journalError = `Ошибка загрузки журнала ADS-B: ${error.message}`;
+        renderJournal();
+        return;
       }
-      console.warn("Ошибка загрузки журнала ADS-B:", error);
+    }
+  }
+
+  async function loadGeofenceEvents() {
+    const fetchId = ++state.geofenceJournalEpoch;
+    let afterId = state.lastGeofenceId;
+    for (let page = 0; page < JOURNAL_CATCHUP_PAGES; page += 1) {
+      try {
+        const payload = await fetchJson(
+          `/api/geofence/events?after_id=${afterId}&limit=${JOURNAL_LIMIT}`,
+        );
+        if (fetchId !== state.geofenceJournalEpoch) return;
+        const status = applyGeofenceGeneration(payload);
+        if (status === "reset") {
+          afterId = 0;
+          continue;
+        }
+        const events = Array.isArray(payload.events) ? payload.events : [];
+        const cursor = finite(payload.next_after_id);
+        if (cursor !== null) state.lastGeofenceId = cursor;
+        state.journalTruncated = Boolean(payload.truncated);
+        const hadError = Boolean(state.journalError);
+        state.journalError = "";
+        if (events.length) {
+          state.geofenceEvents = mergeJournalItems(state.geofenceEvents, events);
+          renderJournal();
+        } else if (!state.geofenceEvents.length || hadError) {
+          renderJournal();
+        }
+        afterId = state.lastGeofenceId;
+        if (!(payload.has_more && afterId > 0 && payload.mode === "since")) break;
+      } catch (error) {
+        if (fetchId !== state.geofenceJournalEpoch) return;
+        state.journalError = `Ошибка загрузки журнала геофенса: ${error.message}`;
+        renderJournal();
+        return;
+      }
     }
   }
 
   async function loadRawMessages() {
-    try {
-      const payload = await fetchJson(
-        `/api/adsb/raw?after_id=${state.lastRawId}&limit=${JOURNAL_LIMIT}`,
-      );
-      const messages = Array.isArray(payload.messages) ? payload.messages : [];
-      state.lastRawId = Math.max(
-        state.lastRawId,
-        finite(payload.last_id) ?? 0,
-        ...messages.map((message) => finite(message.id) ?? 0),
-      );
-      if (messages.length) {
-        state.rawMessages = mergeJournalItems(state.rawMessages, messages);
-        renderJournal();
-      } else if (!state.rawMessages.length) {
-        renderJournal();
-      }
-    } catch (error) {
-      if (!state.rawMessages.length) {
-        el["journal-list"].replaceChildren(
-          emptyNode("Поток сырых ADS-B сообщений недоступен", true),
+    const fetchId = ++state.rawJournalEpoch;
+    let afterId = state.lastRawId;
+    for (let page = 0; page < JOURNAL_CATCHUP_PAGES; page += 1) {
+      try {
+        const payload = await fetchJson(
+          `/api/adsb/raw?after_id=${afterId}&limit=${JOURNAL_LIMIT}`,
         );
+        if (fetchId !== state.rawJournalEpoch) return;
+        const status = applyJournalGeneration(payload, "raw");
+        if (status === "reset") {
+          afterId = 0;
+          continue;
+        }
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        const cursor = finite(payload.next_after_id);
+        if (cursor !== null) state.lastRawId = cursor;
+        state.journalTruncated = Boolean(payload.truncated);
+        const hadError = Boolean(state.journalError);
+        state.journalError = "";
+        if (messages.length) {
+          state.rawMessages = mergeJournalItems(state.rawMessages, messages);
+          renderJournal();
+        } else if (!state.rawMessages.length || hadError) {
+          renderJournal();
+        }
+        afterId = state.lastRawId;
+        if (!(payload.has_more && afterId > 0 && payload.mode === "since")) break;
+      } catch (error) {
+        if (fetchId !== state.rawJournalEpoch) return;
+        state.journalError = `Ошибка загрузки сырых ADS-B сообщений: ${error.message}`;
+        renderJournal();
+        return;
       }
-      console.warn("Ошибка загрузки сырых ADS-B сообщений:", error);
     }
   }
 
   function renderJournal() {
     const rawMode = state.journalMode === "raw";
-    const items = rawMode ? state.rawMessages : state.journalEvents;
+    const geofenceMode = state.journalMode === "geofence";
+    const items = rawMode
+      ? state.rawMessages
+      : (geofenceMode ? state.geofenceEvents : state.journalEvents);
     const list = el["journal-list"];
     const stickToNewest = list.scrollTop < 32;
     const previousHeight = list.scrollHeight;
     const previousTop = list.scrollTop;
     el["journal-count"].textContent = String(items.length);
-    el["journal-hint"].textContent = rawMode
+    const defaultHint = rawMode
       ? "Все строки с порта readsb 30002. AVR разбирается, остальное показывается как есть. Время — UTC. «Очистить» стирает журнал на станции."
-      : "Изменения декодированных данных бортов. Время записей — UTC. «Очистить» стирает журнал на станции.";
+      : geofenceMode
+        ? "Вход и выход из зон. Версия каталога, тип высоты и гистерезис выхода. Повторный вход в ту же зону не дублируется. Время — UTC."
+        : "Изменения декодированных данных бортов. Время записей — UTC. «Очистить» стирает журнал на станции.";
+    const truncated = state.journalTruncated
+      ? " Кольцевой журнал вытеснил более старые записи."
+      : "";
+    el["journal-hint"].textContent = state.journalError || `${defaultHint}${truncated}`;
+    el["journal-hint"].classList.toggle("error-state", Boolean(state.journalError));
     if (!items.length) {
       list.replaceChildren(
         emptyNode(
-          rawMode
-            ? "Ожидание сырых сообщений…"
-            : "Ожидание декодированных сообщений…",
+          state.journalError
+            ? (rawMode
+              ? "Поток сырых ADS-B сообщений недоступен"
+              : (geofenceMode ? "Журнал геофенса недоступен" : "Журнал ADS-B недоступен"))
+            : (rawMode
+              ? "Ожидание сырых сообщений…"
+              : (geofenceMode ? "Ожидание событий геофенса…" : "Ожидание декодированных сообщений…")),
+          Boolean(state.journalError),
         ),
       );
       return;
@@ -1426,11 +2090,51 @@
       const message = document.createElement("p");
       message.textContent = text(event.text, "Декодированное обновление");
       entry.append(timestamp, identity, message);
+      if (geofenceMode) {
+        const details = document.createElement("dl");
+        details.className = "journal-entry__fields";
+        geofenceJournalRows(event).forEach(([name, value]) => {
+          const row = document.createElement("div");
+          row.className = "journal-entry__row";
+          const dt = document.createElement("dt");
+          dt.textContent = name;
+          const dd = document.createElement("dd");
+          dd.textContent = value;
+          row.append(dt, dd);
+          details.append(row);
+        });
+        entry.append(details);
+      }
       fragment.append(entry);
     });
     list.replaceChildren(fragment);
     if (stickToNewest) list.scrollTop = 0;
     else list.scrollTop = previousTop + (list.scrollHeight - previousHeight);
+  }
+
+  function geofenceJournalRows(event) {
+    const rows = [];
+    const add = (name, value) => {
+      if (value === null || value === undefined || value === "") return;
+      rows.push([name, String(value)]);
+    };
+    add("Зона", event.zone);
+    add("Ключ", event.geofence_key);
+    add("Слой", event.layer_id);
+    add("Каталог", event.catalog_version != null ? `v${event.catalog_version}` : "");
+    if (event.altitude_ft != null) {
+      const ref = event.altitude_reference === "geom" ? "геом" : (event.altitude_reference === "baro" ? "баро" : "");
+      add("Высота", `${event.altitude_ft} ft${ref ? ` (${ref})` : ""}`);
+    }
+    if (event.hysteresis_leave_after != null) {
+      add(
+        "Гистерезис",
+        event.kind === "geofence_leave"
+          ? `${event.hysteresis_misses ?? event.hysteresis_leave_after}/${event.hysteresis_leave_after} промаха`
+          : `выход после ${event.hysteresis_leave_after} промахов`,
+      );
+    }
+    return rows;
   }
 
   function rawJournalRows(event) {
@@ -1463,25 +2167,57 @@
   }
 
   async function loadLayers() {
-    el["reload-layers"].disabled = true;
     try {
       const payload = await fetchJson("/api/layers");
       const layers = Array.isArray(payload) ? payload : (payload.layers || []);
-      renderLayerList(layers);
+      const version = finite(payload?.version);
+      renderGisDiagnostics(payload);
+      renderLayerList(layers, payload?.errors || []);
+      if (version !== null) state.layerCatalogVersion = version;
+      await refreshEnabledLayers(layers);
     } catch (error) {
       console.error("Ошибка загрузки списка слоёв:", error);
-      el["custom-layers"].replaceChildren(emptyNode("Не удалось загрузить слои", true));
-    } finally {
-      el["reload-layers"].disabled = false;
+      renderGisDiagnostics(null, error);
+      if (!el["custom-layers"].querySelector(".option")) {
+        el["custom-layers"].replaceChildren(emptyNode("Не удалось загрузить слои", true));
+      }
     }
   }
 
-  function renderLayerList(layers) {
-    if (!layers.length) {
+  function renderGisDiagnostics(payload, error = null) {
+    if (!el["gis-diagnostics"]) return;
+    if (error || !payload) {
+      el["gis-diagnostics"].textContent =
+        `Не удалось загрузить каталог: ${error?.message || "нет ответа"}`;
+      el["gis-diagnostics"].classList.add("error-state");
+      return;
+    }
+    const errors = Array.isArray(payload.errors) ? payload.errors : [];
+    el["gis-diagnostics"].classList.toggle("error-state", errors.length > 0);
+    const reasons = errors.map(formatGisError).join("; ");
+    el["gis-diagnostics"].textContent = [
+      `версия v${payload.version ?? 0}`,
+      `последняя годная v${payload.last_good_version ?? 0}`,
+      `${payload.load_ms ?? 0} мс`,
+      `объектов ${payload.feature_count ?? 0}`,
+      `зон ${payload.geofence_count ?? 0}`,
+      errors.length ? `ошибки: ${reasons}` : "ошибок нет",
+    ].join(" · ");
+  }
+
+  function renderLayerList(layers, errors = []) {
+    const incoming = new Set(layers.map((layerInfo) => text(layerInfo.id, "")).filter(Boolean));
+    [...state.customLayers.keys()].forEach((id) => {
+      if (incoming.has(id)) return;
+      const entry = state.customLayers.get(id);
+      if (entry?.leaflet) state.map.removeLayer(entry.leaflet);
+      state.customLayers.delete(id);
+    });
+    const fragment = document.createDocumentFragment();
+    if (!layers.length && !errors.length) {
       el["custom-layers"].replaceChildren(emptyNode("Нет доступных слоёв"));
       return;
     }
-    const fragment = document.createDocumentFragment();
     layers.forEach((layerInfo) => {
       const id = text(layerInfo.id, "");
       if (!id) return;
@@ -1496,13 +2232,41 @@
       label.append(input, name);
       fragment.append(label);
     });
+    errors.forEach((item) => {
+      const note = document.createElement("p");
+      note.className = "journal-hint error-state";
+      note.textContent = formatGisError(item);
+      fragment.append(note);
+    });
     el["custom-layers"].replaceChildren(fragment);
+  }
+
+  async function refreshEnabledLayers(layers) {
+    for (const layerInfo of layers) {
+      const id = text(layerInfo.id, "");
+      const entry = state.customLayers.get(id);
+      if (!id || !entry) continue;
+      const version = finite(layerInfo.catalog_version ?? layerInfo.version);
+      if (version !== null && version === entry.version) continue;
+      const checked = { checked: true, disabled: false };
+      if (entry.leaflet) state.map.removeLayer(entry.leaflet);
+      state.customLayers.delete(id);
+      await toggleCustomLayer(id, checked, layerInfo);
+    }
+  }
+
+  function rememberCustomLayer(id, leaflet, layerInfo) {
+    state.customLayers.set(id, {
+      leaflet,
+      info: layerInfo,
+      version: finite(layerInfo.catalog_version ?? layerInfo.version) ?? state.layerCatalogVersion,
+    });
   }
 
   async function toggleCustomLayer(id, input, layerInfo) {
     if (!input.checked) {
-      const layer = state.customLayers.get(id);
-      if (layer) state.map.removeLayer(layer);
+      const entry = state.customLayers.get(id);
+      if (entry?.leaflet) state.map.removeLayer(entry.leaflet);
       state.customLayers.delete(id);
       return;
     }
@@ -1535,7 +2299,7 @@
           });
         }
         layer.addTo(state.map);
-        state.customLayers.set(id, layer);
+        rememberCustomLayer(id, layer, layerInfo);
         return;
       }
       const payload = await fetchJson(`/api/layers/${encodeURIComponent(id)}`);
@@ -1563,11 +2327,15 @@
             ? `${name} (${code})`
             : (code || name);
           if (title !== undefined && title !== null && title !== "") {
-            featureLayer.bindTooltip(String(title));
+            featureLayer.bindTooltip(plainTooltip(title));
           }
         },
       }).addTo(state.map);
-      state.customLayers.set(id, layer);
+      const info = {
+        ...layerInfo,
+        catalog_version: finite(payload.version) ?? layerInfo.catalog_version,
+      };
+      rememberCustomLayer(id, layer, info);
     } catch (error) {
       console.error(`Ошибка загрузки слоя ${id}:`, error);
       input.checked = false;
@@ -1581,70 +2349,158 @@
     try {
       const payload = await fetchJson("/api/radio/channels");
       const channels = Array.isArray(payload) ? payload : (payload.channels || []);
-      setRadioAvailable(channels.length > 0);
+      state.radioChannels = channels;
+      state.radioError = "";
+      setRadioHint("");
+      setRadioAvailable(channels.length > 0 || Boolean(state.config.radio?.enabled));
       renderRadioChannels(channels);
     } catch (error) {
-      console.error("Ошибка загрузки VHF-каналов:", error);
-      el["radio-list"].replaceChildren(emptyNode("Не удалось загрузить каналы", true));
+      state.radioError = `Не удалось обновить каналы: ${error.message}`;
+      setRadioHint(state.radioError);
+      if (state.radioChannels.length) {
+        renderRadioChannels(state.radioChannels);
+      } else {
+        setRadioAvailable(Boolean(state.config.radio?.enabled));
+        el["radio-list"].replaceChildren(emptyNode("Не удалось загрузить каналы", true));
+      }
     } finally {
       el["reload-radio"].disabled = false;
     }
   }
 
-  function setRadioAvailable(available) {
+  function setRadioHint(message) {
+    if (!el["radio-hint"]) return;
+    el["radio-hint"].hidden = !message;
+    el["radio-hint"].textContent = message || "";
+    el["radio-hint"].classList.toggle("error-state", Boolean(message));
+  }
+
+  function setRadioAvailable(_available) {
     const radioTab = document.querySelector('.tab[data-tab="radio"]');
-    if (radioTab) radioTab.hidden = !available;
-    if (!available && radioTab?.classList.contains("is-active")) switchTab("aircraft");
+    if (radioTab) radioTab.hidden = false;
   }
 
   function renderRadioChannels(channels) {
     if (!channels.length) {
-      el["radio-list"].replaceChildren(emptyNode("Нет доступных VHF-каналов"));
+      el["radio-list"].replaceChildren(emptyNode(state.radioError || "Нет доступных VHF-каналов", Boolean(state.radioError)));
       return;
     }
     const fragment = document.createDocumentFragment();
     channels.forEach((channel) => {
       const row = document.createElement("div");
       row.className = "radio-channel";
-      row.classList.toggle("is-active", Boolean(channel.active ?? channel.activity));
+      const active = channel.active === undefined ? channel.activity : channel.active;
+      row.classList.toggle("is-active", active === true);
+      row.classList.toggle("is-playing", text(channel.id, "") === text(state.playingChannelId, ""));
       const activity = document.createElement("span");
       activity.className = "radio-channel__activity";
-      activity.title = (channel.active ?? channel.activity) ? "Есть активность" : "Нет активности";
+      activity.title = radioActivityLabel(active);
       const info = document.createElement("span");
       info.className = "radio-channel__info";
       const name = document.createElement("strong");
       name.textContent = text(channel.name ?? channel.label, "Канал");
       const frequency = document.createElement("small");
       const frequencyValue = channel.frequency_mhz ?? channel.frequency;
-      frequency.textContent = frequencyValue === undefined ? "Частота не указана" : `${frequencyValue} МГц`;
+      const level = finite(channel.level_dbfs);
+      frequency.textContent = [
+        frequencyValue === undefined ? "Частота не указана" : `${frequencyValue} МГц`,
+        level === null ? null : `${level.toFixed(1)} dBFS`,
+        radioActivityLabel(active),
+      ].filter(Boolean).join(" · ");
       info.append(name, frequency);
       const play = document.createElement("button");
       play.type = "button";
       play.className = "radio-channel__play";
       play.textContent = "▶";
       play.title = "Слушать канал";
-      const streamUrl = channel.stream_url ?? channel.url;
+      const streamUrl = rewriteStreamUrl(channel.stream_url ?? channel.url);
       play.disabled = !streamUrl;
       play.addEventListener("click", () => playRadioChannel(channel, row));
       row.append(activity, info, play);
       fragment.append(row);
     });
     el["radio-list"].replaceChildren(fragment);
+    updateNowPlaying();
+  }
+
+  function radioActivityLabel(active) {
+    if (active === true) return "Есть активность";
+    if (active === false) return "Нет активности";
+    return "Активность неизвестна";
+  }
+
+  function rewriteStreamUrl(url) {
+    if (!url) return url;
+    try {
+      const parsed = new URL(url, location.href);
+      const pageHost = location.hostname;
+      const localPage = pageHost === "127.0.0.1" || pageHost === "localhost";
+      if (!localPage && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost")) {
+        parsed.hostname = pageHost;
+      }
+      return parsed.href;
+    } catch (_error) {
+      return url;
+    }
+  }
+
+  function bindRadioAudio() {
+    const audio = el["radio-audio"];
+    if (!audio) return;
+    audio.addEventListener("playing", () => {
+      state.radioPlayback = "playing";
+      updateNowPlaying();
+    });
+    audio.addEventListener("waiting", () => {
+      state.radioPlayback = "waiting";
+      updateNowPlaying();
+    });
+    audio.addEventListener("ended", () => {
+      state.radioPlayback = "ended";
+      updateNowPlaying();
+    });
+    audio.addEventListener("error", () => {
+      state.radioPlayback = "error";
+      updateNowPlaying();
+    });
+  }
+
+  function updateNowPlaying() {
+    if (!el["now-playing"]) return;
+    el["now-playing"].classList.toggle("error-state", state.radioPlayback === "error");
+    if (!state.playingChannelId) {
+      el["now-playing"].textContent = state.radioError || "Поток не выбран";
+      return;
+    }
+    const labels = {
+      playing: "",
+      waiting: " (буфер…)",
+      ended: " (остановлен)",
+      error: " (ошибка потока)",
+      idle: "",
+    };
+    el["now-playing"].textContent =
+      `${state.playingChannelName || "VHF-канал"}${labels[state.radioPlayback] || ""}`;
   }
 
   async function playRadioChannel(channel, row) {
-    const streamUrl = channel.stream_url ?? channel.url;
+    const streamUrl = rewriteStreamUrl(channel.stream_url ?? channel.url);
     if (!streamUrl) return;
+    state.playingChannelId = text(channel.id, "");
+    state.playingChannelName = text(channel.name ?? channel.label, "VHF-канал");
+    state.radioPlayback = "waiting";
     document.querySelectorAll(".radio-channel").forEach((item) => item.classList.remove("is-playing"));
     row.classList.add("is-playing");
-    el["now-playing"].textContent = text(channel.name ?? channel.label, "VHF-канал");
-    if (el["radio-audio"].src !== new URL(streamUrl, location.href).href) {
+    updateNowPlaying();
+    const resolved = new URL(streamUrl, location.href).href;
+    if (el["radio-audio"].src !== resolved) {
       el["radio-audio"].src = streamUrl;
     }
     try {
       await el["radio-audio"].play();
     } catch (error) {
-      console.warn("Браузер не начал воспроизведение потока:", error);
+      state.radioPlayback = "error";
+      updateNowPlaying();
     }
   }
 
@@ -1655,16 +2511,60 @@
     return node;
   }
 
+  function adminHeaders() {
+    const token = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+    return token ? { "X-Admin-Token": token } : {};
+  }
+
+  function askAdminToken() {
+    const token = window.prompt("Нужен токен администратора для изменения данных станции.");
+    if (!token || !token.trim()) return false;
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, token.trim());
+    return true;
+  }
+
   async function fetchJson(url, options = {}) {
-    const { headers: extraHeaders, ...rest } = options;
-    const response = await fetch(url, {
-      cache: "no-store",
-      ...rest,
-      headers: { Accept: "application/json", ...extraHeaders },
-    });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) return {};
-    return response.json();
+    const { headers: extraHeaders, retryAuth = true, timeoutMs = 8000, ...rest } = options;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        ...rest,
+        signal: controller.signal,
+        headers: { Accept: "application/json", ...adminHeaders(), ...extraHeaders },
+      });
+      if ((response.status === 401 || response.status === 403) && retryAuth && askAdminToken()) {
+        return fetchJson(url, { ...options, retryAuth: false });
+      }
+      if (!response.ok) {
+        throw new Error(await errorMessage(response));
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) return {};
+      return response.json();
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("тайм-аут запроса");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  async function errorMessage(response) {
+    try {
+      const body = await response.json();
+      const detail = body?.detail;
+      if (typeof detail === "string" && detail) return detail;
+      if (detail && typeof detail === "object") {
+        if (typeof detail.save_error === "string" && detail.save_error) return detail.save_error;
+        if (typeof detail.message === "string" && detail.message) return detail.message;
+      }
+    } catch (_error) {
+      /* keep HTTP status text */
+    }
+    return `${response.status} ${response.statusText}`;
   }
 })();

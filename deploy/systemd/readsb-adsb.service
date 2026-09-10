@@ -3,16 +3,17 @@ Description=readsb ADS-B decoder
 Documentation=https://github.com/wiedehopf/readsb
 After=network.target
 Conflicts=readsb.service dump1090-fa.service
-StartLimitIntervalSec=60
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=readsb
-Group=plugdev
+Group=rtl-sdr
 EnvironmentFile=/etc/default/readsb-adsb
+EnvironmentFile=-/etc/adsb-vhf/sdr.env
 RuntimeDirectory=readsb
 RuntimeDirectoryMode=0755
+ExecCondition=/usr/local/lib/adsb-vhf/rtl-device-mode.sh adsb-device
 ExecStart=/usr/local/lib/adsb-vhf/start-readsb.sh
 Restart=on-failure
 RestartSec=10

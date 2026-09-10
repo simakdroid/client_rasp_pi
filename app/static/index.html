@@ -54,6 +54,7 @@
           <button class="tab" type="button" data-tab="journal">Журнал</button>
           <button class="tab" type="button" data-tab="layers">Слои</button>
           <button class="tab" type="button" data-tab="radio">Радио</button>
+          <button class="tab" type="button" data-tab="station">Станция</button>
         </nav>
 
         <section class="tab-panel is-active" id="panel-aircraft">
@@ -82,7 +83,7 @@
             <h2>Типы ВС</h2>
             <span id="type-catalog-count">0</span>
           </div>
-          <p class="type-catalog__hint">Если ADS-B не дал тип, подставляется запись по 24-битному адресу. Хранится в JSON, без базы.</p>
+          <p class="type-catalog__hint" id="type-catalog-hint">Если ADS-B не дал тип, подставляется запись по 24-битному адресу. Хранится в JSON, без базы.</p>
           <form id="type-catalog-form" class="type-catalog__form">
             <label>
               <span class="sr-only">24-битный адрес ICAO</span>
@@ -112,6 +113,7 @@
           <div class="journal-mode" role="group" aria-label="Формат сообщений">
             <button class="is-active" type="button" data-journal-mode="decoded">Декодированные</button>
             <button type="button" data-journal-mode="raw">Сырые HEX</button>
+            <button type="button" data-journal-mode="geofence">Геофенс</button>
           </div>
           <p class="journal-hint" id="journal-hint">Изменения декодированных данных бортов. Время записей — UTC. «Очистить» стирает журнал на станции.</p>
           <div id="journal-list" class="journal-list pane-scroll" aria-live="polite" tabindex="0">
@@ -124,6 +126,7 @@
             <h2>Картографические слои</h2>
             <button id="reload-layers" class="text-button" type="button">Обновить</button>
           </div>
+          <p class="journal-hint" id="gis-diagnostics">Каталог слоёв ещё не загружен.</p>
           <div class="layer-group">
             <h3>Подложка</h3>
             <label class="option"><input type="radio" name="basemap" value="osm" checked><span>OpenStreetMap</span></label>
@@ -131,11 +134,14 @@
           </div>
           <div class="layer-group">
             <h3>Покрытие</h3>
+            <p class="coverage-disclaimer" id="coverage-caption">Исторический максимум дальности, не гарантированная зона приёма.</p>
             <label class="option">
               <input id="coverage-visible" type="checkbox" checked>
               <span>Роза покрытия</span>
             </label>
             <p class="coverage-stats" id="coverage-stats">Накопление начнётся с первым бортом.</p>
+            <ul class="coverage-breakdown" id="coverage-bands" hidden></ul>
+            <ul class="coverage-breakdown" id="coverage-hours" hidden></ul>
             <button id="reset-coverage" class="text-button" type="button">Сбросить розу</button>
           </div>
           <div class="layer-group">
@@ -146,9 +152,13 @@
 
         <section class="tab-panel" id="panel-radio">
           <div class="panel-heading">
-            <h2>VHF-каналы</h2>
+            <h2>Качество приёма</h2>
             <button id="reload-radio" class="text-button" type="button">Обновить</button>
           </div>
+          <div class="quality-strip" id="radio-quality">
+            <p class="empty-state">Ожидание метрик ADS-B и VHF…</p>
+          </div>
+          <p class="journal-hint" id="radio-hint" hidden></p>
           <div id="radio-list" class="radio-list">
             <p class="empty-state">Загрузка каналов…</p>
           </div>
@@ -159,6 +169,25 @@
             </div>
             <audio id="radio-audio" controls preload="none"></audio>
           </div>
+        </section>
+
+        <section class="tab-panel" id="panel-station">
+          <div class="panel-heading">
+            <h2>Станция</h2>
+            <span id="station-ready">—</span>
+          </div>
+          <p class="journal-hint" id="station-hint">Источники, задачи, SDR, диск и ошибки слоёв. Запись сессии — по запросу, не архив за неделю.</p>
+          <div class="station-status-wrap pane-scroll" id="station-status"></div>
+          <div class="station-session">
+            <button id="session-start" class="text-button" type="button">Записать</button>
+            <button id="session-stop" class="text-button" type="button">Стоп</button>
+            <button id="session-download" class="text-button" type="button">Скачать</button>
+            <button id="session-upload" class="text-button" type="button">Загрузить JSON</button>
+            <button id="session-replay" class="text-button" type="button">Воспроизвести</button>
+            <button id="diagnostics-download" class="text-button" type="button">Диагностика</button>
+            <input id="session-file" type="file" accept="application/json,.json" hidden>
+          </div>
+          <p class="journal-hint" id="session-status">Запись выключена.</p>
         </section>
       </aside>
     </main>

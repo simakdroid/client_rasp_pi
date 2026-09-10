@@ -1,7 +1,13 @@
 # RTL2832U devices are opened through libusb. EEPROM serial is used only to
 # assign roles when two dongles are present. A blank serial must still get
-# plugdev access, otherwise a single unprogrammed stick cannot be opened.
-SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2832", MODE="0660", GROUP="plugdev", TAG+="systemd"
-SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2838", MODE="0660", GROUP="plugdev", TAG+="systemd"
-SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{serial}=="1090", ENV{ADSB_VHF_ROLE}="adsb-1090", ENV{SYSTEMD_ALIAS}="/sys/subsystem/usb/adsb-1090", ENV{SYSTEMD_WANTS}+="readsb-adsb.service"
-SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{serial}=="0118", ENV{ADSB_VHF_ROLE}="vhf-0118", ENV{SYSTEMD_ALIAS}="/sys/subsystem/usb/vhf-0118", ENV{SYSTEMD_WANTS}+="readsb-adsb.service rtl-airband.service"
+# rtl-sdr group access, otherwise a single unprogrammed stick cannot be opened.
+# Add/remove of any Realtek RTL2832U runs adsb-vhf-rtl-hotplug.service, which
+# restarts readsb (index 0 vs serial 1090) and starts/stops rtl-airband.
+# VID/PID stay 0bda + 2832|2838. USB iSerial after rtl_eeprom -s must match
+# the SN: line printed by rtl_test -t.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2832", ACTION=="add", MODE="0660", GROUP="rtl-sdr", TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsb-vhf-rtl-hotplug.service"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2838", ACTION=="add", MODE="0660", GROUP="rtl-sdr", TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsb-vhf-rtl-hotplug.service"
+SUBSYSTEM=="usb", ENV{ID_VENDOR_ID}=="0bda", ENV{ID_MODEL_ID}=="2832", ACTION=="remove", TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsb-vhf-rtl-hotplug.service"
+SUBSYSTEM=="usb", ENV{ID_VENDOR_ID}=="0bda", ENV{ID_MODEL_ID}=="2838", ACTION=="remove", TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsb-vhf-rtl-hotplug.service"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2832|2838", ATTR{serial}=="1090", ENV{ADSB_VHF_ROLE}="adsb-1090"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2832|2838", ATTR{serial}=="0118", ENV{ADSB_VHF_ROLE}="vhf-0118"

@@ -1,20 +1,24 @@
 [Unit]
-Description=RTL-Airband VHF AM receiver (RTL-SDR serial 0118)
+Description=RTL-Airband VHF AM receiver
 Documentation=https://github.com/rtl-airband/RTLSDR-Airband
 After=network-online.target
 Wants=network-online.target
 Conflicts=rtl-airband-rs.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=rtl-airband
 Group=rtl-airband
-SupplementaryGroups=plugdev
+SupplementaryGroups=rtl-sdr
+EnvironmentFile=-/etc/adsb-vhf/sdr.env
 EnvironmentFile=/etc/adsb-vhf/rtl-airband.env
+# 0027: stats.prom stays group-readable; the rendered config is chmod 0600 below.
+UMask=0027
 RuntimeDirectory=rtl-airband
 RuntimeDirectoryMode=0750
 ExecCondition=/usr/local/lib/adsb-vhf/rtl-device-mode.sh vhf-available
-ExecStartPre=/bin/sh -ec '/usr/bin/envsubst < /etc/rtl_airband.conf.in > /run/rtl-airband/rtl_airband.conf'
+ExecStartPre=/bin/sh -ec 'umask 077; VHF_SERIAL="${VHF_SERIAL:-0118}"; export VHF_SERIAL ICECAST_HOST ICECAST_PORT ICECAST_USER ICECAST_PASSWORD; /usr/bin/envsubst '"'"'${ICECAST_HOST} ${ICECAST_PORT} ${ICECAST_USER} ${ICECAST_PASSWORD} ${VHF_SERIAL}'"'"' < /etc/rtl_airband.conf.in > /run/rtl-airband/rtl_airband.conf && chmod 0600 /run/rtl-airband/rtl_airband.conf'
 ExecStart=/usr/bin/rtl_airband -F -e -c /run/rtl-airband/rtl_airband.conf
 Restart=on-failure
 RestartSec=3

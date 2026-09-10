@@ -3,8 +3,9 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import AliasChoices, BaseModel, Field, HttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
         env_prefix="AIRMON_",
         env_nested_delimiter="__",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "Raspberry Pi Air Monitor"
@@ -36,6 +38,18 @@ class Settings(BaseSettings):
     readsb_json_path: Path = Path("/run/readsb/aircraft.json")
     sbs_host: str = "127.0.0.1"
     sbs_port: int = Field(default=30003, ge=1, le=65535)
+    sbs_timezone: str = "UTC"
+
+    @field_validator("sbs_timezone")
+    @classmethod
+    def _sbs_timezone(cls, value: str) -> str:
+        name = value.strip() or "UTC"
+        try:
+            ZoneInfo(name)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown IANA timezone {name}") from exc
+        return name
+
     raw_host: str = "127.0.0.1"
     raw_port: int = Field(default=30002, ge=1, le=65535)
     raw_log_size: int = Field(default=1000, ge=10, le=50000)
@@ -51,19 +65,49 @@ class Settings(BaseSettings):
         Path(__file__).resolve().parent.parent / "data" / "aircraft-types.json"
     )
 
+    max_active_aircraft: int = Field(default=500, ge=1, le=20000)
     websocket_interval_s: float = Field(default=0.75, ge=0.2, le=5)
     websocket_heartbeat_s: float = Field(default=10, ge=1, le=60)
+    websocket_queue_size: int = Field(default=32, ge=1, le=1000)
+    websocket_max_clients: int = Field(default=32, ge=1, le=500)
+    websocket_send_timeout_s: float = Field(default=10, ge=1, le=120)
+    admin_token: str = ""
+    trusted_hosts: list[str] = []
     layers_dir: Path = Path(__file__).resolve().parent.parent / "data" / "layers"
     static_dir: Path = Path(__file__).resolve().parent / "static"
     cors_origins: list[str] = []
 
     osm_url: str = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
     ofm_url: str | None = None
+
+    @field_validator("ofm_url", mode="before")
+    @classmethod
+    def blank_ofm_url_to_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     radio_channels_json: str = "[]"
     radio_stats_path: Path | None = Path("/run/rtl-airband/stats.prom")
     radio_auto_detect: bool = True
     radio_min_rtl_receivers: int = Field(default=2, ge=1, le=16)
-    radio_receiver_serial: str = "0118"
+    radio_receiver_serial: str = Field(
+        default="0118",
+        validation_alias=AliasChoices(
+            "AIRMON_RADIO_RECEIVER_SERIAL",
+            "RADIO_RECEIVER_SERIAL",
+            "VHF_SERIAL",
+        ),
+    )
+    adsb_preferred_serial: str = Field(
+        default="1090",
+        validation_alias=AliasChoices(
+            "AIRMON_ADSB_PREFERRED_SERIAL",
+            "ADSB_PREFERRED_SERIAL",
+        ),
+    )
     usb_sysfs_path: Path = Path("/sys/bus/usb/devices")
     icecast_status_url: HttpUrl | None = None
 

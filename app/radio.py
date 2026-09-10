@@ -5,9 +5,12 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from .config import RadioChannel
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class RadioMonitor:
@@ -47,7 +50,58 @@ class RadioMonitor:
 
     def hardware_available(self) -> bool:
         serials = _rtl_serials(self.sysfs_path)
-        return len(serials) >= self.min_receivers and self.receiver_serial in serials
+        return (
+            len(serials) >= self.min_receivers
+            and serials.count(self.receiver_serial) == 1
+        )
+
+    def connected_serials(self) -> list[str]:
+        return _rtl_serials(self.sysfs_path)
+
+    def role_snapshot(self, preferred_adsb: str = "1090") -> dict[str, Any]:
+        serials = self.connected_serials()
+        count = len(serials)
+        vhf = self.receiver_serial
+        duplicate = serials.count(vhf) > 1 or (
+            bool(preferred_adsb) and serials.count(preferred_adsb) > 1
+        )
+        adsb_role: str | None = None
+        vhf_role: str | None = None
+        if count == 1:
+            adsb_role = "0"
+        elif (
+            count >= 2
+            and preferred_adsb
+            and preferred_adsb != vhf
+            and serials.count(preferred_adsb) == 1
+            and serials.count(vhf) == 1
+        ):
+            adsb_role = preferred_adsb
+            vhf_role = vhf
+        return {
+            "count": count,
+            "serials": serials,
+            "adsb": adsb_role,
+            "vhf": vhf_role,
+            "duplicate_serials": duplicate,
+            "vhf_available": self.hardware_available(),
+        }
+
+    async def quality_snapshot(self) -> list[dict[str, Any]]:
+        channels = await self.status()
+        quality: list[dict[str, Any]] = []
+        for channel in channels:
+            quality.append(
+                {
+                    "id": channel.get("id"),
+                    "name": channel.get("name"),
+                    "frequency_mhz": channel.get("frequency_mhz"),
+                    "active": channel.get("active"),
+                    "level_dbfs": channel.get("level_dbfs"),
+                    "status_error": bool(channel.get("status_error")),
+                }
+            )
+        return quality
 
     async def _channel_status(self, channel: RadioChannel) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -112,6 +166,24 @@ def _parse_prometheus_stats(text: str) -> dict[str, dict[str, float]]:
 
 def _frequency_key(value: float) -> str:
     return f"{value:.3f}"
+
+
+def rewrite_loopback_stream_url(url: str, public_host: str) -> str:
+    """Point Icecast URLs at the request host when the page is opened over LAN."""
+    host = public_host.strip().lower().rstrip(".")
+    if not host or host in _LOOPBACK_HOSTS:
+        return url
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in _LOOPBACK_HOSTS:
+        return url
+    if ":" in host and not host.startswith("["):
+        netloc = f"[{host}]"
+    else:
+        netloc = host
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def _rtl_serials(sysfs_path: Path) -> list[str]:

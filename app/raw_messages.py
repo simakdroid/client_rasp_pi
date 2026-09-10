@@ -6,8 +6,10 @@ import logging
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from .mode_s import decode_avr
+from .tracker import _page_log
 
 LOGGER = logging.getLogger(__name__)
 HEX_DIGITS = frozenset("0123456789ABCDEF")
@@ -17,6 +19,7 @@ class RawMessageLog:
     def __init__(self, max_messages: int = 1000) -> None:
         self._messages: deque[dict[str, Any]] = deque(maxlen=max_messages)
         self._sequence = 0
+        self._generation = uuid4().hex
         self._lock = asyncio.Lock()
 
     async def append(self, raw: str) -> None:
@@ -41,37 +44,26 @@ class RawMessageLog:
         newest_first: bool = False,
     ) -> dict[str, Any]:
         async with self._lock:
-            filtered = [message for message in self._messages if message["id"] > after_id]
-            if newest_first:
-                window = (
-                    filtered
-                    if before_id <= 0
-                    else [message for message in filtered if message["id"] < before_id]
-                )
-                page = list(reversed(window))[:limit]
-                oldest = page[-1]["id"] if page else 0
-                has_more = (
-                    any(message["id"] < oldest for message in filtered)
-                    if oldest
-                    else bool(filtered)
-                )
-                return {
-                    "messages": page,
-                    "last_id": self._sequence,
-                    "total": len(filtered),
-                    "has_more": has_more,
-                }
-            return {
-                "messages": filtered[-limit:],
-                "last_id": self._sequence,
-                "total": len(filtered),
-                "has_more": len(filtered) > limit,
-            }
+            return _page_log(
+                list(self._messages),
+                after_id=after_id,
+                before_id=before_id,
+                limit=limit,
+                last_id=self._sequence,
+                items_key="messages",
+                newest_first=newest_first,
+                generation=self._generation,
+            )
 
     async def clear(self) -> dict[str, Any]:
         async with self._lock:
             self._messages.clear()
-            return {"ok": True, "last_id": self._sequence}
+            self._generation = uuid4().hex
+            return {
+                "ok": True,
+                "last_id": self._sequence,
+                "generation": self._generation,
+            }
 
 
 async def ingest_raw_messages(host: str, port: int, message_log: RawMessageLog) -> None:

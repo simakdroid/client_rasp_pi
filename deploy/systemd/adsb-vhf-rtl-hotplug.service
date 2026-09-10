@@ -1,0 +1,8 @@
+[Unit]
+Description=Rebind ADS-B/VHF RTL-SDR roles after USB change
+After=systemd-udevd.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/adsb-vhf/sdr.env
+ExecStart=/usr/local/lib/adsb-vhf/rtl-hotplug.sh

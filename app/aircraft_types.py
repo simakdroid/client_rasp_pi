@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
-LOGGER = logging.getLogger(__name__)
+from .persist import atomic_write_json, read_json_file
 
+LOGGER = logging.getLogger(__name__)
 ICAO_RE = re.compile(r"^[0-9a-f]{6}$")
 TYPE_CODE_RE = re.compile(r"^[A-Z0-9]{2,6}$")
 # readsb `type` is the reception class (mode_s, adsb_icao, …), not the airframe.
@@ -27,7 +29,7 @@ EMITTER_TYPES = frozenset({
 
 
 def normalize_icao(value: object) -> str:
-    icao = str(value or "").strip().lower().lstrip("~")
+    icao = str(value or "").strip().lower()
     if not ICAO_RE.fullmatch(icao):
         raise ValueError("ICAO must be a 24-bit hex address")
     return icao
@@ -50,20 +52,41 @@ class AircraftTypeCatalog:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path
+        self._lock = threading.RLock()
         self._entries: dict[str, dict[str, str]] = {}
         self._fingerprint: tuple[int, int] | None = None
+        self._version = 0
         self.load()
 
+    @property
+    def version(self) -> int:
+        return self._version
+
     def load(self) -> bool:
+        with self._lock:
+            return self._load_unlocked()
+
+    def refresh(self) -> bool:
+        with self._lock:
+            return self._refresh_unlocked()
+
+    def _refresh_unlocked(self) -> bool:
+        fingerprint = self._file_fingerprint()
+        if fingerprint == self._fingerprint:
+            return False
+        return self._load_unlocked()
+
+    def _load_unlocked(self) -> bool:
         previous = dict(self._entries)
         if self.path is None or not self.path.is_file():
             self._entries = {}
             self._fingerprint = None
+            if previous:
+                self._version += 1
             return previous != self._entries
         try:
-            self._fingerprint = self._file_fingerprint()
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            payload = read_json_file(self.path)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
             LOGGER.warning("Cannot read aircraft types %s: %s", self.path, exc)
             return False
         if not isinstance(payload, dict):
@@ -77,13 +100,11 @@ class AircraftTypeCatalog:
                 LOGGER.warning("Skipping invalid aircraft type entry %r in %s", raw_icao, self.path)
                 continue
         self._entries = entries
-        return previous != self._entries
-
-    def refresh(self) -> bool:
-        fingerprint = self._file_fingerprint()
-        if fingerprint == self._fingerprint:
-            return False
-        return self.load()
+        self._fingerprint = self._file_fingerprint()
+        if previous != self._entries:
+            self._version += 1
+            return True
+        return False
 
     def _file_fingerprint(self) -> tuple[int, int] | None:
         if self.path is None:
@@ -94,35 +115,46 @@ class AircraftTypeCatalog:
             return None
         return (stat.st_mtime_ns, stat.st_size)
 
-    def dump(self) -> dict[str, dict[str, str]]:
-        return {icao: dict(entry) for icao, entry in sorted(self._entries.items())}
+    def dump(self, entries: dict[str, dict[str, str]] | None = None) -> dict[str, dict[str, str]]:
+        with self._lock:
+            source = self._entries if entries is None else entries
+            return {icao: dict(entry) for icao, entry in sorted(source.items())}
 
     def flush(self) -> None:
+        with self._lock:
+            self._commit_unlocked(self._entries, expected_fingerprint=self._fingerprint)
+
+    def _commit_unlocked(
+        self,
+        entries: dict[str, dict[str, str]],
+        *,
+        expected_fingerprint: tuple[int, int] | None,
+    ) -> bool:
         if self.path is None:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(f"{self.path.name}.tmp")
-        temporary.write_text(
-            json.dumps(self.dump(), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(self.path)
+            self._entries = entries
+            return True
+        if self._file_fingerprint() != expected_fingerprint:
+            return False
+        payload = {icao: dict(entry) for icao, entry in sorted(entries.items())}
+        atomic_write_json(self.path, payload, indent=2, ensure_ascii=False)
+        self._entries = entries
         self._fingerprint = self._file_fingerprint()
+        return True
 
     def list(self) -> list[dict[str, str]]:
-        self.refresh()
-        return [
-            {"icao": icao.upper(), **entry}
-            for icao, entry in sorted(self._entries.items())
-        ]
+        with self._lock:
+            return [
+                {"icao": icao.upper(), **entry}
+                for icao, entry in sorted(self._entries.items())
+            ]
 
     def lookup(self, icao: object) -> dict[str, str] | None:
-        self.refresh()
-        try:
-            entry = self._entries.get(normalize_icao(icao))
-        except ValueError:
-            return None
-        return dict(entry) if entry else None
+        with self._lock:
+            try:
+                entry = self._entries.get(normalize_icao(icao))
+            except ValueError:
+                return None
+            return dict(entry) if entry else None
 
     def upsert(
         self, icao: object, type_code: object, type_desc: object | None = None
@@ -132,20 +164,37 @@ class AircraftTypeCatalog:
         desc = str(type_desc or "").strip()
         if desc:
             entry["type_desc"] = desc[:80]
-        self._entries[key] = entry
-        self.flush()
-        return {"icao": key.upper(), **entry}
+        with self._lock:
+            for _attempt in range(2):
+                self._refresh_unlocked()
+                next_entries = dict(self._entries)
+                next_entries[key] = entry
+                if self._commit_unlocked(
+                    next_entries, expected_fingerprint=self._fingerprint
+                ):
+                    self._version += 1
+                    return {"icao": key.upper(), **entry}
+                self._load_unlocked()
+            raise OSError("aircraft types file changed during save")
 
     def delete(self, icao: object) -> bool:
         key = normalize_icao(icao)
-        if key not in self._entries:
-            return False
-        del self._entries[key]
-        self.flush()
-        return True
+        with self._lock:
+            for _attempt in range(2):
+                self._refresh_unlocked()
+                if key not in self._entries:
+                    return False
+                next_entries = dict(self._entries)
+                del next_entries[key]
+                if self._commit_unlocked(
+                    next_entries, expected_fingerprint=self._fingerprint
+                ):
+                    self._version += 1
+                    return True
+                self._load_unlocked()
+            raise OSError("aircraft types file changed during save")
 
     def apply(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.refresh()
         if is_airframe_type_code(payload.get("type_code")):
             return payload
         payload["type_code"] = None

@@ -9,8 +9,11 @@ User=adsb-vhf
 Group=adsb-vhf
 SupplementaryGroups=rtl-airband
 WorkingDirectory=/opt/adsb-vhf
+EnvironmentFile=-/etc/adsb-vhf/sdr.env
 EnvironmentFile=/etc/adsb-vhf/backend.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+StateDirectory=adsb-vhf
+StateDirectoryMode=0755
 ExecStart=/opt/adsb-vhf/.venv/bin/uvicorn app.main:app --host ${BACKEND_HOST} --port ${BACKEND_PORT} --ws-ping-interval 15 --ws-ping-timeout 30
 Restart=on-failure
 RestartSec=3
@@ -18,8 +21,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadOnlyPaths=-/run/readsb
-ReadWritePaths=-/opt/adsb-vhf/data
+ReadOnlyPaths=-/run/readsb -/opt/adsb-vhf/data/layers
+ReadWritePaths=-/var/lib/adsb-vhf
 
 [Install]
 WantedBy=multi-user.target

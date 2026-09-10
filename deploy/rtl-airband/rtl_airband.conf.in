@@ -1,12 +1,14 @@
 # Rendered by rtl-airband.service to /run/rtl-airband/rtl_airband.conf.
 # Keep all channels within the usable bandwidth of one RTL-SDR.
+# Source of truth for frequencies/mounts: deploy/radio-channels.json.
+# Do not mix 125.8 MHz with 118.x on this 2.56 MHz stick.
 stats_filepath = "/run/rtl-airband/stats.prom";
 
 devices:
 (
   {
     type = "rtlsdr";
-    serial = "0118";
+    serial = "${VHF_SERIAL}";
     gain = 28;
     correction = 0;
     mode = "multichannel";
