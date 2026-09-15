@@ -132,6 +132,7 @@ class AircraftState:
     lost_at: datetime | None = None
     contact_id: str | None = None
     revision: int = 0
+    icao_hits: dict[str, int] = field(default_factory=dict)
 
     def public_dict(self, include_track: bool = True) -> dict[str, Any]:
         result: dict[str, Any] = {

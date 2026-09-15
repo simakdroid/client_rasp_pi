@@ -705,3 +705,143 @@ async def test_geofence_enter_is_immediate_and_leave_uses_hysteresis(tmp_path) -
     assert "гистерезис 2/2" in leaves[0]["text"]
 
 
+@pytest.mark.asyncio
+async def test_hamming1_ghost_hex_does_not_create_second_aircraft(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    now = datetime.now(UTC)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="151d56",
+                lat=55.1,
+                lon=37.1,
+                callsign="AFL123",
+                received_at=now,
+                position_at=now,
+            )
+        ]
+    )
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="551d56",
+                lat=55.1005,
+                lon=37.1005,
+                received_at=now + timedelta(seconds=1),
+                position_at=now + timedelta(seconds=1),
+            )
+        ]
+    )
+    snapshot = await tracker.snapshot()
+    assert [item["icao"] for item in snapshot] == ["151d56"]
+    assert snapshot[0]["callsign"] == "AFL123"
+    journal = await tracker.recent_events()
+    assert [item["icao"] for item in journal["events"] if item["kind"] == "detected"] == [
+        "151d56"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hamming1_mode_s_ghost_without_position_aliases_by_callsign(
+    tmp_path,
+) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    now = datetime.now(UTC)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="151d56",
+                callsign="AFL123",
+                altitude_ft=32000,
+                received_at=now,
+            )
+        ]
+    )
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="551d56",
+                callsign="AFL123",
+                altitude_ft=32100,
+                received_at=now + timedelta(seconds=1),
+            )
+        ]
+    )
+    snapshot = await tracker.snapshot()
+    assert [item["icao"] for item in snapshot] == ["151d56"]
+    assert snapshot[0]["altitude_ft"] == 32100
+
+
+@pytest.mark.asyncio
+async def test_hamming1_far_positions_stay_separate(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    now = datetime.now(UTC)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="151d56",
+                lat=55.1,
+                lon=37.1,
+                received_at=now,
+                position_at=now,
+            )
+        ]
+    )
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="551d56",
+                lat=60.0,
+                lon=40.0,
+                received_at=now + timedelta(seconds=1),
+                position_at=now + timedelta(seconds=1),
+            )
+        ]
+    )
+    snapshot = await tracker.snapshot()
+    assert sorted(item["icao"] for item in snapshot) == ["151d56", "551d56"]
+
+
+@pytest.mark.asyncio
+async def test_hamming1_ghost_first_rekeys_to_majority_hex(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    now = datetime.now(UTC)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="551d56",
+                lat=55.1,
+                lon=37.1,
+                received_at=now,
+                position_at=now,
+            )
+        ]
+    )
+    for offset in (1, 2):
+        await tracker.apply(
+            [
+                AircraftUpdate(
+                    icao="151d56",
+                    lat=55.11,
+                    lon=37.11,
+                    received_at=now + timedelta(seconds=offset),
+                    position_at=now + timedelta(seconds=offset),
+                )
+            ]
+        )
+    snapshot = await tracker.snapshot()
+    assert [item["icao"] for item in snapshot] == ["151d56"]
+    delta = await tracker.consume_delta()
+    assert delta is not None
+    assert "551d56" in delta["remove"]
+    assert delta["upsert"][0]["icao"] == "151d56"
+
+

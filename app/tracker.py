@@ -20,6 +20,7 @@ from .persist import atomic_write_json
 LOGGER = logging.getLogger(__name__)
 GEOD = Geod(ellps="WGS84")
 GEOFENCE_LEAVE_MISSES = 2
+HAMMING1_ALIAS_M = 25_000
 
 
 class AircraftTracker:
@@ -441,9 +442,77 @@ class AircraftTracker:
             type_desc=previous.type_desc,
         )
 
+    def _find_hamming1_alias(self, update: AircraftUpdate) -> AircraftState | None:
+        matches = [
+            state
+            for icao, state in self._aircraft.items()
+            if icao != update.icao and _icao_bit_distance(icao, update.icao) == 1
+        ]
+        corroborated = [state for state in matches if _hamming1_corroborated(state, update)]
+        if not corroborated:
+            return None
+        if len(corroborated) == 1:
+            return corroborated[0]
+        located = [
+            state
+            for state in corroborated
+            if state.lat is not None
+            and state.lon is not None
+            and update.lat is not None
+            and update.lon is not None
+        ]
+        if not located:
+            return None
+
+        def _distance(state: AircraftState) -> float:
+            _, _, metres = GEOD.inv(state.lon, state.lat, update.lon, update.lat)
+            return metres
+
+        return min(located, key=_distance)
+
+    def _count_icao(self, state: AircraftState, icao: str) -> None:
+        state.icao_hits[icao] = state.icao_hits.get(icao, 0) + 1
+
+    def _rekey_aircraft(self, state: AircraftState, new_icao: str) -> None:
+        old_icao = state.icao
+        if old_icao == new_icao or new_icao in self._aircraft:
+            return
+        self._aircraft.pop(old_icao, None)
+        self._changed.discard(old_icao)
+        self._removed.add(old_icao)
+        self._removed.discard(new_icao)
+        points = self._track_appends.pop(old_icao, None)
+        if points:
+            self._track_appends[new_icao] = points
+        inside = self._geofence_inside.pop(old_icao, None)
+        if inside is not None:
+            self._geofence_inside[new_icao] = inside
+        misses = self._geofence_misses.pop(old_icao, None)
+        if misses is not None:
+            self._geofence_misses[new_icao] = misses
+        self._coverage.forget(old_icao)
+        state.icao = new_icao
+        self._aircraft[new_icao] = state
+        self._changed.add(new_icao)
+        state.revision += 1
+
     def _merge(self, update: AircraftUpdate) -> None:
-        state = self._aircraft.get(update.icao)
+        incoming_icao = update.icao
+        state = self._aircraft.get(incoming_icao)
         is_new = state is None
+        counted = False
+        if is_new:
+            alias = self._find_hamming1_alias(update)
+            if alias is not None:
+                self._count_icao(alias, incoming_icao)
+                counted = True
+                preferred = _preferred_icao(alias)
+                if preferred != alias.icao:
+                    self._rekey_aircraft(alias, preferred)
+                if incoming_icao != alias.icao:
+                    update = update.model_copy(update={"icao": alias.icao})
+                state = alias
+                is_new = False
         if is_new:
             if len(self._aircraft) >= self.max_active_aircraft:
                 LOGGER.warning(
@@ -463,6 +532,8 @@ class AircraftTracker:
                 state.contact_id = self._next_contact_id(update.icao)
             self._aircraft[update.icao] = state
             self._forget_geofence_state(update.icao)
+        if not counted:
+            self._count_icao(state, incoming_icao)
 
         changed = is_new
         position_added = False
@@ -755,6 +826,38 @@ class AircraftTracker:
         if len(state.track) > self.max_track_points:
             del state.track[: len(state.track) - self.max_track_points]
         return True
+
+
+def _icao_bit_distance(left: str, right: str) -> int:
+    try:
+        return (int(left, 16) ^ int(right, 16)).bit_count()
+    except ValueError:
+        return 24
+
+
+def _preferred_icao(state: AircraftState) -> str:
+    if not state.icao_hits:
+        return state.icao
+    return max(
+        state.icao_hits,
+        key=lambda icao: (state.icao_hits[icao], icao == state.icao),
+    )
+
+
+def _hamming1_corroborated(state: AircraftState, update: AircraftUpdate) -> bool:
+    previous = _normalized_callsign(state.callsign)
+    incoming = _normalized_callsign(update.callsign)
+    if previous and incoming and previous == incoming:
+        return True
+    if (
+        state.lat is not None
+        and state.lon is not None
+        and update.lat is not None
+        and update.lon is not None
+    ):
+        _, _, metres = GEOD.inv(state.lon, state.lat, update.lon, update.lat)
+        return metres <= HAMMING1_ALIAS_M
+    return update.lat is None or update.lon is None or state.lat is None or state.lon is None
 
 
 def _is_newer(current: datetime | None, incoming: datetime) -> bool:
