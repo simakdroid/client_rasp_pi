@@ -193,13 +193,20 @@ ss -ltn | grep 30005
 
 ## 6. VHF AM и Icecast
 
-Каталог каналов — `deploy/radio-channels.json`. Его частоты и mountpoint должны
-совпадать с `.env.example`, `deploy/env/backend.env.example` и
-`deploy/rtl-airband/rtl_airband.conf.in`. Скопированный шаблон использует
-`serial = "${VHF_SERIAL}"`, три AM-частоты 118.1 / 118.5 / 119.1,
-`centerfreq = 118.600` МГц и полосу `2.56` МГц. Не смешивайте 125.8 МГц с
-диапазоном 118.x на одном стике: они не помещаются в 2.56 МГц вокруг 118.6.
-Для далёких частот нужен режим сканирования или дополнительный приёмник.
+Каталог каналов задаёт оператор в `/etc/adsb-vhf/backend.env` переменной
+`AIRMON_RADIO_CHANNELS_JSON`. UI и rtl-airband читают один и тот же JSON:
+частоты, имена и Icecast mountpoint. `stream_url` и `mountpoint` можно не
+указывать — тогда поток будет `http://127.0.0.1:8000/vhf-XXXXXX.mp3` от
+частоты. Все каналы должны помещаться в полосу 2.56 МГц одного RTL-SDR
+(не смешивайте 125.8 МГц с 118.x на одном стике). После правки:
+
+```bash
+sudo nano /etc/adsb-vhf/backend.env
+sudo systemctl restart rtl-airband adsb-vhf-backend
+```
+
+`install.sh` не перезаписывает уже существующий `backend.env`, чтобы ваши
+частоты не сбрасывались. Пример списка — в `deploy/env/backend.env.example`.
 
 Настройте секретный env-файл (пароли Icecast остаются здесь, `0600` у
 сгенерированного conf; backend читает только `stats.prom`):
@@ -218,17 +225,17 @@ sudo chmod 0640 /etc/adsb-vhf/rtl-airband.env
 После изменения частот или env:
 
 ```bash
-sudo systemctl enable --now rtl-airband.service
+sudo systemctl restart rtl-airband adsb-vhf-backend
 systemctl status rtl-airband.service
 journalctl -u rtl-airband.service -n 100 --no-pager
-curl -I http://127.0.0.1:8000/vhf-118100.mp3
 ```
 
-Unit перед каждым запуском формирует конфигурацию с секретом только в
-`/run/rtl-airband/`, затем запускает `rtl_airband` в foreground. Пароль не
-передаётся аргументом процесса. Подставляются `ICECAST_*` и `VHF_SERIAL`,
-а готовый `rtl_airband.conf` получает права `0600`, чтобы web-процесс из
-группы `rtl-airband` читал `stats.prom`, но не пароль Icecast.
+Unit перед каждым запуском вызывает `render-rtl-airband-conf.sh` от root
+(`ExecStartPre=+`): читает `AIRMON_RADIO_CHANNELS_JSON` из
+`/etc/adsb-vhf/backend.env` и Icecast-параметры из `rtl-airband.env`, затем
+пишет `/run/rtl-airband/rtl_airband.conf` с правами `0600`. Пароль не
+передаётся аргументом процесса и не попадает в environment rtl-airband из
+`backend.env` (там может быть `AIRMON_ADMIN_TOKEN`).
 `stats_filepath` обновляет Prometheus-файл примерно раз в 15 секунд; backend
 сравнивает `channel_activity_counter` и показывает активность squelch и
 текущий dBFS без выдачи UI системных прав.

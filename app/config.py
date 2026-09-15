@@ -3,18 +3,46 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AliasChoices, BaseModel, Field, HttpUrl, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def vhf_mountpoint(frequency_mhz: float) -> str:
+    return f"vhf-{int(round(frequency_mhz * 1000)):06d}.mp3"
+
+
 class RadioChannel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     name: str
     frequency_mhz: float = Field(ge=118.0, le=137.0)
-    stream_url: str
+    stream_url: str = ""
+    mountpoint: str | None = None
     status_url: str | None = None
+
+    @model_validator(mode="after")
+    def _fill_stream_defaults(self) -> RadioChannel:
+        mount = (self.mountpoint or "").strip()
+        if not mount and self.stream_url.strip():
+            mount = urlparse(self.stream_url).path.lstrip("/")
+        if not mount:
+            mount = vhf_mountpoint(self.frequency_mhz)
+        self.mountpoint = mount
+        if not self.stream_url.strip():
+            self.stream_url = f"http://127.0.0.1:8000/{mount}"
+        return self
 
 
 class Settings(BaseSettings):

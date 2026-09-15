@@ -1,7 +1,8 @@
 import json
-import re
 from importlib.resources import files
 from pathlib import Path
+
+from app.rtl_airband_conf import load_channels_json, render_conf, tuner_center_mhz
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "deploy" / "radio-channels.json"
@@ -29,33 +30,32 @@ def test_radio_channel_catalog_matches_env_and_rtl_airband() -> None:
     by_id = {item["id"]: item for item in catalog}
     assert set(by_id) == {"tower", "ground", "approach"}
 
-    conf = (ROOT / "deploy" / "rtl-airband" / "rtl_airband.conf.in").read_text(encoding="utf-8")
-    freqs = [float(value) for value in re.findall(r"(?m)^\s+freq = ([0-9.]+);", conf)]
-    mounts = re.findall(r'mountpoint = "([^"]+)";', conf)
-    serial = re.search(r'serial = "([^"]+)";', conf)
-    center = float(re.search(r"centerfreq = ([0-9.]+);", conf).group(1))
-    sample_rate = float(re.search(r"sample_rate = ([0-9.]+);", conf).group(1))
-
-    assert serial is not None and serial.group(1) == "${VHF_SERIAL}"
-    assert freqs == [float(item["frequency_mhz"]) for item in catalog]
-    assert mounts == [item["mountpoint"] for item in catalog]
-
-    half_band = sample_rate / 2
+    freqs = [float(item["frequency_mhz"]) for item in catalog]
+    center = tuner_center_mhz(freqs)
     for item in catalog:
         frequency = float(item["frequency_mhz"])
-        assert abs(frequency - center) <= half_band
+        assert abs(frequency - center) <= 2.56 / 2
         expected_mount = f"vhf-{int(round(frequency * 1000)):06d}.mp3"
         assert item["mountpoint"] == expected_mount
         assert str(item["stream_url"]).endswith("/" + expected_mount)
 
-    for env_path in (
-        ROOT / ".env.example",
-        ROOT / "deploy" / "env" / "backend.env.example",
-    ):
-        channels = json.loads(_env_value(env_path, "AIRMON_RADIO_CHANNELS_JSON"))
-        assert [(item["id"], item["frequency_mhz"], item["stream_url"]) for item in channels] == [
-            (item["id"], item["frequency_mhz"], item["stream_url"]) for item in catalog
-        ]
+    example_json = load_channels_json(backend_env=ROOT / "deploy" / "env" / "backend.env.example")
+    example = json.loads(example_json)
+    assert [(item["id"], float(item["frequency_mhz"])) for item in example] == [
+        (item["id"], float(item["frequency_mhz"])) for item in catalog
+    ]
+    generated = render_conf(channels_json=example_json, icecast_password="x")
+    for item in catalog:
+        assert f"freq = {float(item['frequency_mhz']):.3f};" in generated
+        assert f'mountpoint = "{item["mountpoint"]}";' in generated
+
+    channels = json.loads(_env_value(ROOT / ".env.example", "AIRMON_RADIO_CHANNELS_JSON"))
+    assert [(item["id"], item["frequency_mhz"], item["stream_url"]) for item in channels] == [
+        (item["id"], item["frequency_mhz"], item["stream_url"]) for item in catalog
+    ]
+    backend_env = (ROOT / "deploy" / "env" / "backend.env.example").read_text(encoding="utf-8")
+    assert "AIRMON_RADIO_CHANNELS_JSON=" in backend_env
+    assert "AIRMON_RADIO_CHANNELS_PATH=" not in backend_env
 
 
 def test_sdr_env_is_the_serial_source() -> None:
@@ -92,8 +92,15 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
 
     radio = (ROOT / "deploy" / "systemd" / "rtl-airband.service").read_text(encoding="utf-8")
     assert "SupplementaryGroups=rtl-sdr" in radio
-    assert "${VHF_SERIAL}" in radio
+    assert "render-rtl-airband-conf.sh" in radio
+    assert "ExecStartPre=+" in radio
+    assert "${ICECAST_PORT}" not in radio
     assert "StartLimitIntervalSec=0" in radio
+    render = (ROOT / "deploy" / "scripts" / "render-rtl-airband-conf.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "app.rtl_airband_conf" in render
+    assert "envsubst" not in render
 
     backend = (ROOT / "deploy" / "systemd" / "adsb-vhf-backend.service").read_text(encoding="utf-8")
     assert "BACKEND_HOST" in backend
@@ -102,15 +109,18 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "/opt/adsb-vhf/data/layers" in backend
     assert "AIRMON_AIRCRAFT_TYPES_PATH=/var/lib/adsb-vhf/aircraft-types.json" in backend
     assert "AIRMON_COVERAGE_PATH=/var/lib/adsb-vhf/coverage-rose.json" in backend
+    assert "AIRMON_RADIO_CHANNELS_PATH=" not in backend
 
     install = (ROOT / "deploy" / "install.sh").read_text(encoding="utf-8")
     assert "rtl-sdr" in install
     assert "rtl-hotplug.sh" in install
+    assert "render-rtl-airband-conf.sh" in install
     assert "sdr.env" in install
     assert "/var/lib/adsb-vhf" in install
     assert "/opt/air-monitor" not in install
     assert "ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH" in install
     assert "ensure_backend_writable_file AIRMON_COVERAGE_PATH" in install
+    assert "AIRMON_RADIO_CHANNELS_PATH=" not in install
 
 
 def test_kiosk_fails_if_backend_never_answers() -> None:

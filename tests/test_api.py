@@ -132,6 +132,16 @@ def test_vhf_serial_aliases_radio_receiver_serial(monkeypatch) -> None:
     assert settings.radio_receiver_serial == "4242"
 
 
+def test_radio_channels_json_is_the_channel_list() -> None:
+    settings = Settings(
+        _env_file=None,
+        radio_channels_json='[{"id":"tower","name":"Вышка","frequency_mhz":121.7}]',
+    )
+    channels = settings.radio_channels
+    assert channels[0].frequency_mhz == 121.7
+    assert channels[0].stream_url.endswith("/vhf-121700.mp3")
+
+
 def test_radio_channels_rewrite_loopback_for_lan_host(tmp_path) -> None:
     settings = Settings(
         layers_dir=tmp_path,

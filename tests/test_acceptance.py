@@ -686,10 +686,13 @@ async def test_backend_reads_metrics_but_not_icecast_password(tmp_path) -> None:
     assert "user:pass" not in dumped
     assert "stream_url" not in dumped
     unit = (ROOT / "deploy" / "systemd" / "rtl-airband.service").read_text(encoding="utf-8")
+    render = (ROOT / "app" / "rtl_airband_conf.py").read_text(encoding="utf-8")
     backend = (ROOT / "deploy" / "systemd" / "adsb-vhf-backend.service").read_text(
         encoding="utf-8"
     )
-    assert "chmod 0600" in unit
+    assert "chmod(0o600)" in render
+    assert "render-rtl-airband-conf.sh" in unit
+    assert "ExecStartPre=+" in unit
     assert "stats.prom" in unit
     assert "rtl_airband.conf" not in backend
     assert first[0]["id"] == "tower"

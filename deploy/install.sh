@@ -39,7 +39,6 @@ if [ ! -e /etc/default/readsb-adsb ]; then
   install -Dm0644 "$DEPLOY_DIR/readsb/readsb.default" /etc/default/readsb-adsb
 fi
 install -Dm0644 "$DEPLOY_DIR/radio-channels.json" /etc/adsb-vhf/radio-channels.json
-install -Dm0644 "$DEPLOY_DIR/rtl-airband/rtl_airband.conf.in" /etc/rtl_airband.conf.in
 install -Dm0644 "$DEPLOY_DIR/systemd/readsb-adsb.service" /etc/systemd/system/readsb-adsb.service
 install -Dm0644 "$DEPLOY_DIR/systemd/rtl-airband.service" /etc/systemd/system/rtl-airband.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-backend.service" /etc/systemd/system/adsb-vhf-backend.service
@@ -49,6 +48,7 @@ install -Dm0755 "$DEPLOY_DIR/chromium/start-kiosk.sh" /usr/local/lib/adsb-vhf/st
 install -Dm0755 "$DEPLOY_DIR/scripts/rtl-device-mode.sh" /usr/local/lib/adsb-vhf/rtl-device-mode.sh
 install -Dm0755 "$DEPLOY_DIR/scripts/rtl-hotplug.sh" /usr/local/lib/adsb-vhf/rtl-hotplug.sh
 install -Dm0755 "$DEPLOY_DIR/scripts/start-readsb.sh" /usr/local/lib/adsb-vhf/start-readsb.sh
+install -Dm0755 "$DEPLOY_DIR/scripts/render-rtl-airband-conf.sh" /usr/local/lib/adsb-vhf/render-rtl-airband-conf.sh
 
 # Deploy the Python package and static assets without copying local venv/cache files.
 install -d -m0755 -o root -g adsb-vhf /opt/adsb-vhf
@@ -91,6 +91,7 @@ ensure_backend_writable_file() {
 }
 ensure_backend_writable_file AIRMON_COVERAGE_PATH /var/lib/adsb-vhf/coverage-rose.json
 ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH /var/lib/adsb-vhf/aircraft-types.json
+
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb
