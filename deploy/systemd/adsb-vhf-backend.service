@@ -12,6 +12,7 @@ WorkingDirectory=/opt/adsb-vhf
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=AIRMON_COVERAGE_PATH=/var/lib/adsb-vhf/coverage-rose.json
 Environment=AIRMON_AIRCRAFT_TYPES_PATH=/var/lib/adsb-vhf/aircraft-types.json
+Environment=AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json
 EnvironmentFile=-/etc/adsb-vhf/sdr.env
 EnvironmentFile=/etc/adsb-vhf/backend.env
 StateDirectory=adsb-vhf

@@ -142,7 +142,33 @@ def test_radio_channels_json_is_the_channel_list() -> None:
     assert channels[0].stream_url.endswith("/vhf-scan.mp3")
 
 
-def test_radio_channels_rewrite_loopback_for_lan_host(tmp_path) -> None:
+def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
+    settings = Settings(
+        layers_dir=tmp_path,
+        readsb_json_path=tmp_path / "missing-aircraft.json",
+        coverage_path=tmp_path / "coverage-rose.json",
+        aircraft_types_path=tmp_path / "aircraft-types.json",
+        radio_channels_path=tmp_path / "radio-channels.json",
+        radio_auto_detect=False,
+        radio_channels_json='[{"id":"tower","name":"Вышка","frequency_mhz":118.1}]',
+    )
+    with TestClient(create_app(settings)) as client:
+        listed = client.get("/api/radio/config").json()["channels"]
+        assert listed[0]["frequency_mhz"] == 118.1
+        added = client.post(
+            "/api/radio/config",
+            json={"name": "ATIS", "frequency_mhz": 123.7},
+        )
+        assert added.status_code == 200
+        freqs = [item["frequency_mhz"] for item in added.json()["channels"]]
+        assert 118.1 in freqs and 123.7 in freqs
+        channel_id = next(
+            item["id"] for item in added.json()["channels"] if item["frequency_mhz"] == 123.7
+        )
+        deleted = client.delete(f"/api/radio/config/{channel_id}")
+        assert deleted.status_code == 200
+        leftover = [item["frequency_mhz"] for item in deleted.json()["channels"]]
+        assert leftover == [118.1]
     settings = Settings(
         layers_dir=tmp_path,
         readsb_json_path=tmp_path / "missing-aircraft.json",

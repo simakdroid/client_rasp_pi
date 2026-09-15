@@ -168,6 +168,7 @@
       "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-coverage",
       "coverage-visible", "coverage-stats", "coverage-caption", "coverage-bands", "coverage-hours", "reset-coverage",
       "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
+      "radio-channel-form", "radio-channel-name", "radio-channel-freq",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
       "type-catalog-count", "type-catalog-form", "type-catalog-icao",
       "type-catalog-type", "type-catalog-desc", "type-catalog-list", "type-catalog-hint",
@@ -208,6 +209,11 @@
     el["type-catalog-list"].addEventListener("click", (event) => {
       const button = event.target.closest("[data-remove-icao]");
       if (button) void removeTypeCatalogEntry(button.dataset.removeIcao);
+    });
+    el["radio-channel-form"].addEventListener("submit", submitRadioChannel);
+    el["radio-list"].addEventListener("click", (event) => {
+      const button = event.target.closest("[data-remove-channel]");
+      if (button) void removeRadioChannel(button.dataset.removeChannel);
     });
     bindRadioAudio();
     el["session-start"].addEventListener("click", () => void controlSession("start"));
@@ -2347,8 +2353,20 @@
   async function loadRadioChannels() {
     el["reload-radio"].disabled = true;
     try {
-      const payload = await fetchJson("/api/radio/channels");
-      const channels = Array.isArray(payload) ? payload : (payload.channels || []);
+      const config = await fetchJson("/api/radio/config");
+      const configured = Array.isArray(config.channels) ? config.channels : [];
+      let live = [];
+      try {
+        const payload = await fetchJson("/api/radio/channels");
+        live = Array.isArray(payload) ? payload : (payload.channels || []);
+      } catch (_error) {
+        live = [];
+      }
+      const liveById = new Map(live.map((item) => [text(item.id, ""), item]));
+      const channels = configured.map((channel) => {
+        const liveItem = liveById.get(text(channel.id, ""));
+        return liveItem ? { ...channel, ...liveItem, stream_url: channel.stream_url } : channel;
+      });
       state.radioChannels = channels;
       state.radioError = "";
       setRadioHint("");
@@ -2368,6 +2386,42 @@
     }
   }
 
+  async function submitRadioChannel(event) {
+    event.preventDefault();
+    const name = el["radio-channel-name"].value.trim();
+    const frequency = Number(el["radio-channel-freq"].value);
+    try {
+      const payload = await fetchJson("/api/radio/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, frequency_mhz: frequency }),
+      });
+      el["radio-channel-form"].reset();
+      el["radio-channel-name"].focus();
+      const channels = Array.isArray(payload.channels) ? payload.channels : [];
+      state.radioChannels = channels;
+      setRadioHint("");
+      renderRadioChannels(channels);
+    } catch (error) {
+      setRadioHint(`Не удалось сохранить частоту: ${error.message}`);
+    }
+  }
+
+  async function removeRadioChannel(channelId) {
+    if (!channelId) return;
+    try {
+      const payload = await fetchJson(`/api/radio/config/${encodeURIComponent(channelId)}`, {
+        method: "DELETE",
+      });
+      const channels = Array.isArray(payload.channels) ? payload.channels : [];
+      state.radioChannels = channels;
+      setRadioHint("");
+      renderRadioChannels(channels);
+    } catch (error) {
+      setRadioHint(`Не удалось удалить частоту: ${error.message}`);
+    }
+  }
+
   function setRadioHint(message) {
     if (!el["radio-hint"]) return;
     el["radio-hint"].hidden = !message;
@@ -2382,7 +2436,7 @@
 
   function renderRadioChannels(channels) {
     if (!channels.length) {
-      el["radio-list"].replaceChildren(emptyNode(state.radioError || "Нет доступных VHF-каналов", Boolean(state.radioError)));
+      el["radio-list"].replaceChildren(emptyNode(state.radioError || "Добавьте VHF-частоту", Boolean(state.radioError)));
       return;
     }
     const fragment = document.createDocumentFragment();
@@ -2416,7 +2470,13 @@
       const streamUrl = rewriteStreamUrl(channel.stream_url ?? channel.url);
       play.disabled = !streamUrl;
       play.addEventListener("click", () => playRadioChannel(channel, row));
-      row.append(activity, info, play);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "radio-channel__remove";
+      remove.dataset.removeChannel = text(channel.id, "");
+      remove.textContent = "×";
+      remove.title = "Удалить частоту";
+      row.append(activity, info, play, remove);
       fragment.append(row);
     });
     el["radio-list"].replaceChildren(fragment);

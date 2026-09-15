@@ -21,8 +21,9 @@ from .broadcast import BroadcastHub, ClientLimitError
 from .config import Settings, get_settings
 from .diagnostics import collect_diagnostics, read_adsb_status, read_host_status
 from .gis import LayerManager, UnsupportedTileFormatError, tile_http_metadata
-from .models import AircraftTypeInput
+from .models import AircraftTypeInput, RadioChannelInput
 from .radio import RadioMonitor, rewrite_loopback_stream_url
+from .radio_channels import RadioChannelCatalog
 from .raw_messages import RawMessageLog, ingest_raw_messages
 from .runtime import RuntimeStatus, run_supervised
 from .sessions import SessionRecorder, SessionReplayInput
@@ -54,8 +55,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_clients=settings.websocket_max_clients,
     )
     raw_messages = RawMessageLog(settings.raw_log_size)
+    channel_catalog = RadioChannelCatalog(
+        settings.radio_channels_path,
+        settings.radio_channels_json,
+    )
     radio = RadioMonitor(
-        settings.radio_channels,
+        channel_catalog.channels(),
         settings.radio_stats_path,
         auto_detect=settings.radio_auto_detect,
         min_receivers=settings.radio_min_rtl_receivers,
@@ -159,7 +164,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "preferred_adsb_serial": settings.adsb_preferred_serial,
                 "enabled": roles["vhf_available"]
                 if settings.radio_auto_detect
-                else bool(settings.radio_channels),
+                else bool(channel_catalog.channels()),
                 "active_channels": sum(1 for item in quality if item.get("active") is True),
                 "channels": quality,
             },
@@ -300,7 +305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "radio": {
                 "enabled": await asyncio.to_thread(radio.hardware_available)
                 if settings.radio_auto_detect
-                else bool(settings.radio_channels)
+                else bool(channel_catalog.channels())
             },
             "admin_required": bool(settings.admin_token),
             "track_max_points": settings.track_max_points,
@@ -455,6 +460,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if isinstance(stream_url, str):
                 item["stream_url"] = rewrite_loopback_stream_url(stream_url, host)
         return channels
+
+    def _rewrite_config_channels(request: Request) -> list[dict[str, object]]:
+        host = request.url.hostname or ""
+        items = channel_catalog.public_list()
+        for item in items:
+            stream_url = item.get("stream_url")
+            if isinstance(stream_url, str):
+                item["stream_url"] = rewrite_loopback_stream_url(stream_url, host)
+        return items
+
+    @app.get("/api/radio/config")
+    async def radio_config(request: Request) -> dict[str, object]:
+        return {"channels": _rewrite_config_channels(request)}
+
+    @app.post("/api/radio/config", dependencies=[Depends(require_admin)])
+    async def add_radio_channel(body: RadioChannelInput, request: Request) -> dict[str, object]:
+        try:
+            await asyncio.to_thread(channel_catalog.upsert, body.name, body.frequency_mhz)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        radio.channels = channel_catalog.channels()
+        return {"channels": _rewrite_config_channels(request)}
+
+    @app.delete("/api/radio/config/{channel_id}", dependencies=[Depends(require_admin)])
+    async def delete_radio_channel(channel_id: str, request: Request) -> dict[str, object]:
+        try:
+            deleted = await asyncio.to_thread(channel_catalog.delete, channel_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Radio channel not found")
+        radio.channels = channel_catalog.channels()
+        return {"channels": _rewrite_config_channels(request)}
 
     @app.websocket("/ws/aircraft")
     async def aircraft_socket(websocket: WebSocket) -> None:

@@ -688,6 +688,17 @@ h1, h2, h3, p { margin: 0; }
 .radio-channel__info strong { font-size: 12px; }
 .radio-channel__info small { color: var(--muted); }
 .radio-channel__play { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 17px; }
+.radio-channel__remove {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.radio-channel__remove:hover { color: var(--danger, #d36b6b); }
+#panel-radio .type-catalog__form { flex-shrink: 0; margin: 0 0 10px; }
 
 .audio-player { margin-top: auto; padding-top: 16px; }
 .audio-player__now { display: flex; flex-direction: column; gap: 3px; padding-bottom: 8px; }

@@ -31,6 +31,19 @@ class Position(BaseModel):
     altitude_ft: int | None = None
 
 
+class RadioChannelInput(BaseModel):
+    name: str = Field(min_length=1, max_length=MAX_TEXT)
+    frequency_mhz: float = Field(ge=118.0, le=137.0, allow_inf_nan=False)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("channel name is required")
+        return text
+
+
 class AircraftTypeInput(BaseModel):
     icao: str
     type_code: str = Field(max_length=16)

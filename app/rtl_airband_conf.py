@@ -38,12 +38,20 @@ def load_channels_json(
     *,
     channels_json: str | None = None,
     backend_env: Path | None = None,
+    channels_path: Path | None = None,
 ) -> str:
     text = (channels_json or "").strip()
     if text:
         return text
-    path = backend_env or Path(os.environ.get("AIRMON_BACKEND_ENV", str(DEFAULT_BACKEND_ENV)))
-    parsed = parse_env_file(path)
+    file_path = channels_path
+    if file_path is None and backend_env is None:
+        file_path = Path(
+            os.environ.get("AIRMON_RADIO_CHANNELS_PATH", "/var/lib/adsb-vhf/radio-channels.json")
+        )
+    if file_path is not None and file_path.is_file():
+        return file_path.read_text(encoding="utf-8")
+    env_path = backend_env or Path(os.environ.get("AIRMON_BACKEND_ENV", str(DEFAULT_BACKEND_ENV)))
+    parsed = parse_env_file(env_path)
     return parsed.get("AIRMON_RADIO_CHANNELS_JSON", "[]")
 
 

@@ -160,9 +160,20 @@
           <div class="quality-strip" id="radio-quality">
             <p class="empty-state">Ожидание метрик ADS-B и VHF…</p>
           </div>
-          <p class="journal-hint">Частоты — в <code>/etc/adsb-vhf/backend.env</code> (<code>AIRMON_RADIO_CHANNELS_JSON</code>). Сканер: один поток <code>vhf-scan.mp3</code> на весь список. После правки перезапустите <code>rtl-airband</code> и <code>adsb-vhf-backend</code>.</p>
+          <p class="journal-hint">Сканер: один поток <code>vhf-scan.mp3</code> на весь список. Частоты правятся здесь и сохраняются на станции.</p>
           <p class="journal-hint" id="radio-hint" hidden></p>
-          <div id="radio-list" class="radio-list">
+          <form id="radio-channel-form" class="type-catalog__form">
+            <label>
+              Название
+              <input id="radio-channel-name" name="name" maxlength="80" placeholder="Вышка" autocomplete="off" required>
+            </label>
+            <label>
+              МГц
+              <input id="radio-channel-freq" name="frequency_mhz" type="number" min="118" max="137" step="0.001" placeholder="118.100" required>
+            </label>
+            <button type="submit">Добавить</button>
+          </form>
+          <div id="radio-list" class="radio-list pane-scroll" tabindex="0">
             <p class="empty-state">Загрузка каналов…</p>
           </div>
           <div class="audio-player">

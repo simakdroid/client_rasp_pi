@@ -43,6 +43,8 @@ install -Dm0644 "$DEPLOY_DIR/systemd/readsb-adsb.service" /etc/systemd/system/re
 install -Dm0644 "$DEPLOY_DIR/systemd/rtl-airband.service" /etc/systemd/system/rtl-airband.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-backend.service" /etc/systemd/system/adsb-vhf-backend.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-rtl-hotplug.service" /etc/systemd/system/adsb-vhf-rtl-hotplug.service
+install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-radio-channels.path" /etc/systemd/system/adsb-vhf-radio-channels.path
+install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-radio-reload.service" /etc/systemd/system/adsb-vhf-radio-reload.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-kiosk.service" /etc/systemd/user/adsb-kiosk.service
 install -Dm0755 "$DEPLOY_DIR/chromium/start-kiosk.sh" /usr/local/lib/adsb-vhf/start-kiosk.sh
 install -Dm0755 "$DEPLOY_DIR/scripts/rtl-device-mode.sh" /usr/local/lib/adsb-vhf/rtl-device-mode.sh
@@ -91,11 +93,17 @@ ensure_backend_writable_file() {
 }
 ensure_backend_writable_file AIRMON_COVERAGE_PATH /var/lib/adsb-vhf/coverage-rose.json
 ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH /var/lib/adsb-vhf/aircraft-types.json
+ensure_backend_writable_file AIRMON_RADIO_CHANNELS_PATH /var/lib/adsb-vhf/radio-channels.json
+if [ -f /etc/adsb-vhf/backend.env ]; then
+  sed -i -E 's|^AIRMON_RADIO_CHANNELS_PATH=.*|AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json|' \
+    /etc/adsb-vhf/backend.env
+fi
 
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb
 systemctl daemon-reload
+systemctl enable --now adsb-vhf-radio-channels.path
 
 # On upgrades, immediately load the new launcher, udev policy and backend code.
 for service in readsb-adsb.service rtl-airband.service adsb-vhf-backend.service; do

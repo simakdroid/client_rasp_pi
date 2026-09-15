@@ -121,6 +121,16 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("radio_channels_path", mode="before")
+    @classmethod
+    def blank_radio_channels_path_to_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    radio_channels_path: Path | None = None
     radio_channels_json: str = "[]"
     radio_stats_path: Path | None = Path("/run/rtl-airband/stats.prom")
     radio_auto_detect: bool = True
@@ -146,18 +156,25 @@ class Settings(BaseSettings):
     @property
     def radio_channels(self) -> list[RadioChannel]:
         channels = [RadioChannel.model_validate(item) for item in self._radio_json()]
-        for channel in channels:
-            channel.mountpoint = SCAN_MOUNTPOINT
-            channel.stream_url = SCAN_STREAM_URL
-        return channels
+        return with_scan_stream(channels)
 
     def _radio_json(self) -> list[dict[str, object]]:
         import json
 
-        value = json.loads(self.radio_channels_json)
+        if self.radio_channels_path is not None and self.radio_channels_path.is_file():
+            value = json.loads(self.radio_channels_path.read_text(encoding="utf-8"))
+        else:
+            value = json.loads(self.radio_channels_json)
         if not isinstance(value, list):
-            raise ValueError("AIRMON_RADIO_CHANNELS_JSON must contain a JSON array")
+            raise ValueError("radio channel list must contain a JSON array")
         return value
+
+
+def with_scan_stream(channels: list[RadioChannel]) -> list[RadioChannel]:
+    for channel in channels:
+        channel.mountpoint = SCAN_MOUNTPOINT
+        channel.stream_url = SCAN_STREAM_URL
+    return channels
 
 
 @lru_cache

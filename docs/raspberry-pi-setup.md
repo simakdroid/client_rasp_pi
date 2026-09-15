@@ -193,23 +193,12 @@ ss -ltn | grep 30005
 
 ## 6. VHF AM и Icecast
 
-Каталог каналов задаёт оператор в `/etc/adsb-vhf/backend.env` переменной
-`AIRMON_RADIO_CHANNELS_JSON`. UI и rtl-airband читают один и тот же JSON.
-rtl-airband работает в `mode = "scan"`: донгл перестраивается по списку, поэтому
-частоты могут быть далеко друг от друга (118.x и 123.7 вместе допустимы).
-Icecast отдаёт **один** поток `vhf-scan.mp3` на все каналы; в панели радио
-кнопка «слушать» у любой частоты открывает этот поток. Сканер останавливается
-на занятом канале, пока не закроется squelch (~5 частот в секунду в поиске).
-`stream_url` в JSON можно не указывать. После правки:
-
-```bash
-sudo nano /etc/adsb-vhf/backend.env
-sudo systemctl restart rtl-airband adsb-vhf-backend
-```
-
-`install.sh` не перезаписывает уже существующий `backend.env`, чтобы ваши
-частоты не сбрасывались. Пример списка — в `deploy/env/backend.env.example`.
-Не больше 32 частот.
+Каталог каналов задаёт оператор на вкладке «Радио» в приложении. Список
+хранится в `/var/lib/adsb-vhf/radio-channels.json`. Пока файла нет, берётся
+`AIRMON_RADIO_CHANNELS_JSON` из `backend.env`. rtl-airband работает в
+`mode = "scan"`: донгл перестраивается по списку, частоты могут быть далеко
+друг от друга. Icecast отдаёт один поток `vhf-scan.mp3`. После сохранения в UI
+path-unit перезапускает rtl-airband. Не больше 32 частот.
 
 Настройте секретный env-файл (пароли Icecast остаются здесь, `0600` у
 сгенерированного conf; backend читает только `stats.prom`):

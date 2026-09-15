@@ -93,6 +93,7 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "SupplementaryGroups=rtl-sdr" in radio
     assert "render-rtl-airband-conf.sh" in radio
     assert "ExecStartPre=+" in radio
+    assert "AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json" in radio
     assert "${ICECAST_PORT}" not in radio
     assert "StartLimitIntervalSec=0" in radio
     render = (ROOT / "deploy" / "scripts" / "render-rtl-airband-conf.sh").read_text(
@@ -108,7 +109,7 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "/opt/adsb-vhf/data/layers" in backend
     assert "AIRMON_AIRCRAFT_TYPES_PATH=/var/lib/adsb-vhf/aircraft-types.json" in backend
     assert "AIRMON_COVERAGE_PATH=/var/lib/adsb-vhf/coverage-rose.json" in backend
-    assert "AIRMON_RADIO_CHANNELS_PATH=" not in backend
+    assert "AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json" in backend
 
     install = (ROOT / "deploy" / "install.sh").read_text(encoding="utf-8")
     assert "rtl-sdr" in install
@@ -119,7 +120,8 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "/opt/air-monitor" not in install
     assert "ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH" in install
     assert "ensure_backend_writable_file AIRMON_COVERAGE_PATH" in install
-    assert "AIRMON_RADIO_CHANNELS_PATH=" not in install
+    assert "AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json" in install
+    assert "adsb-vhf-radio-channels.path" in install
 
 
 def test_kiosk_fails_if_backend_never_answers() -> None:
