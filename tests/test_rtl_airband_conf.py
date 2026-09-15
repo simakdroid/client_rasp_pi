@@ -41,6 +41,7 @@ def test_render_scan_allows_wide_span() -> None:
     assert "freqs = ( 118.100, 123.700 );" in text
     assert 'labels = ( "Вышка", "ATIS" );' in text
     assert 'mountpoint = "vhf-scan.mp3";' in text
+    assert "squelch_snr_threshold = 3.0;" in text
     assert 'password = "s3cret";' in text
     assert "centerfreq" not in text
     assert "multichannel" not in text

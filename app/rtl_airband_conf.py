@@ -136,7 +136,7 @@ def render_conf(
         f"        freqs = ( {_freq_list(channels)} );\n"
         f"        labels = ( {_label_list(channels)} );\n"
         '        modulation = "am";\n'
-        "        squelch_snr_threshold = 8.0;\n"
+        "        squelch_snr_threshold = 3.0;\n"
         "        outputs:\n"
         "        (\n"
         "          {\n"
