@@ -22,6 +22,10 @@ def vhf_mountpoint(frequency_mhz: float) -> str:
     return f"vhf-{int(round(frequency_mhz * 1000)):06d}.mp3"
 
 
+SCAN_MOUNTPOINT = "vhf-scan.mp3"
+SCAN_STREAM_URL = f"http://127.0.0.1:8000/{SCAN_MOUNTPOINT}"
+
+
 class RadioChannel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -141,7 +145,11 @@ class Settings(BaseSettings):
 
     @property
     def radio_channels(self) -> list[RadioChannel]:
-        return [RadioChannel.model_validate(item) for item in self._radio_json()]
+        channels = [RadioChannel.model_validate(item) for item in self._radio_json()]
+        for channel in channels:
+            channel.mountpoint = SCAN_MOUNTPOINT
+            channel.stream_url = SCAN_STREAM_URL
+        return channels
 
     def _radio_json(self) -> list[dict[str, object]]:
         import json

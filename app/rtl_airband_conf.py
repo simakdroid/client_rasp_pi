@@ -9,17 +9,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .config import RadioChannel, vhf_mountpoint
+from .config import SCAN_MOUNTPOINT, RadioChannel
 
-SAMPLE_RATE_MHZ = 2.56
 STATS_PATH = "/run/rtl-airband/stats.prom"
 DEFAULT_BACKEND_ENV = Path("/etc/adsb-vhf/backend.env")
 DEFAULT_OUTPUT = Path("/run/rtl-airband/rtl_airband.conf")
-MAX_CHANNELS = 8
-
-
-def vhf_mountpoint_from_channel(channel: RadioChannel) -> str:
-    return (channel.mountpoint or "").strip() or vhf_mountpoint(channel.frequency_mhz)
+MAX_CHANNELS = 32
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -73,20 +68,6 @@ def parse_channels(channels_json: str) -> list[RadioChannel]:
     return channels
 
 
-def tuner_center_mhz(frequencies: list[float], sample_rate: float = SAMPLE_RATE_MHZ) -> float:
-    lowest = min(frequencies)
-    highest = max(frequencies)
-    center = round((lowest + highest) / 2, 3)
-    half = sample_rate / 2
-    for frequency in frequencies:
-        if abs(frequency - center) > half:
-            raise ValueError(
-                f"{frequency} MHz does not fit in a {sample_rate:g} MHz RTL-SDR window "
-                f"centered at {center} MHz; keep all VHF channels within {sample_rate:g} MHz"
-            )
-    return center
-
-
 def libconfig_string(value: str) -> str:
     if "\n" in value or "\r" in value:
         raise ValueError("libconfig strings cannot contain newlines")
@@ -98,6 +79,18 @@ def _strip(value: str | None, default: str) -> str:
     return text.replace("\r", "").strip()
 
 
+def _freq_list(channels: list[RadioChannel]) -> str:
+    return ", ".join(f"{channel.frequency_mhz:.3f}" for channel in channels)
+
+
+def _label_list(channels: list[RadioChannel]) -> str:
+    labels = []
+    for channel in channels:
+        name = channel.name.strip() or f"{channel.frequency_mhz:.3f} MHz"
+        labels.append(libconfig_string(name))
+    return ", ".join(labels)
+
+
 def render_conf(
     *,
     channels_json: str,
@@ -106,7 +99,6 @@ def render_conf(
     icecast_port: str = "8000",
     icecast_user: str = "source",
     icecast_password: str = "",
-    sample_rate: float = SAMPLE_RATE_MHZ,
 ) -> str:
     channels = parse_channels(channels_json)
     serial = _strip(vhf_serial, "0118") or "0118"
@@ -116,13 +108,10 @@ def render_conf(
     password = _strip(icecast_password, "")
     if not port.isdigit():
         raise ValueError(f"ICECAST_PORT must be an integer, got: [{port}]")
-    center = tuner_center_mhz([channel.frequency_mhz for channel in channels], sample_rate)
-    blocks = [
-        _channel_block(channel, host, port, user, password) for channel in channels
-    ]
-    joined = ",\n".join(blocks)
+    names = " + ".join(channel.name.strip() or channel.id for channel in channels)
     return (
         "# Generated from AIRMON_RADIO_CHANNELS_JSON in /etc/adsb-vhf/backend.env.\n"
+        "# Scan mode retunes the dongle, so frequencies need not fit in 2.56 MHz.\n"
         f'stats_filepath = "{STATS_PATH}";\n'
         "\n"
         "devices:\n"
@@ -132,31 +121,12 @@ def render_conf(
         f"    serial = {libconfig_string(serial)};\n"
         "    gain = 28;\n"
         "    correction = 0;\n"
-        '    mode = "multichannel";\n'
-        f"    sample_rate = {sample_rate:g};\n"
-        f"    centerfreq = {center:.3f};\n"
-        "\n"
+        '    mode = "scan";\n'
         "    channels:\n"
         "    (\n"
-        f"{joined}\n"
-        "    );\n"
-        "  }\n"
-        ");\n"
-    )
-
-
-def _channel_block(
-    channel: RadioChannel,
-    host: str,
-    port: str,
-    user: str,
-    password: str,
-) -> str:
-    mount = vhf_mountpoint_from_channel(channel)
-    name = channel.name.strip() or f"VHF AM {channel.frequency_mhz:.3f} MHz"
-    return (
         "      {\n"
-        f"        freq = {channel.frequency_mhz:.3f};\n"
+        f"        freqs = ( {_freq_list(channels)} );\n"
+        f"        labels = ( {_label_list(channels)} );\n"
         '        modulation = "am";\n'
         "        squelch_snr_threshold = 8.0;\n"
         "        outputs:\n"
@@ -165,14 +135,18 @@ def _channel_block(
         '            type = "icecast";\n'
         f"            server = {libconfig_string(host)};\n"
         f"            port = {port};\n"
-        f"            mountpoint = {libconfig_string(mount)};\n"
-        f"            name = {libconfig_string(name)};\n"
+        f"            mountpoint = {libconfig_string(SCAN_MOUNTPOINT)};\n"
+        f"            name = {libconfig_string(names or 'VHF AM scanner')};\n"
         '            genre = "Aviation";\n'
         f"            username = {libconfig_string(user)};\n"
         f"            password = {libconfig_string(password)};\n"
+        "            send_scan_freq_tags = true;\n"
         "          }\n"
         "        );\n"
-        "      }"
+        "      }\n"
+        "    );\n"
+        "  }\n"
+        ");\n"
     )
 
 

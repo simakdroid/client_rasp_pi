@@ -139,7 +139,7 @@ def test_radio_channels_json_is_the_channel_list() -> None:
     )
     channels = settings.radio_channels
     assert channels[0].frequency_mhz == 121.7
-    assert channels[0].stream_url.endswith("/vhf-121700.mp3")
+    assert channels[0].stream_url.endswith("/vhf-scan.mp3")
 
 
 def test_radio_channels_rewrite_loopback_for_lan_host(tmp_path) -> None:
@@ -156,11 +156,11 @@ def test_radio_channels_rewrite_loopback_for_lan_host(tmp_path) -> None:
     )
     with TestClient(create_app(settings), base_url="http://192.168.1.10:8080") as client:
         channels = client.get("/api/radio/channels").json()
-    assert channels[0]["stream_url"] == "http://192.168.1.10:8000/vhf-118100.mp3"
+    assert channels[0]["stream_url"] == "http://192.168.1.10:8000/vhf-scan.mp3"
 
     with TestClient(create_app(settings), base_url="http://127.0.0.1:8080") as client:
         local = client.get("/api/radio/channels").json()
-    assert local[0]["stream_url"] == "http://127.0.0.1:8000/vhf-118100.mp3"
+    assert local[0]["stream_url"] == "http://127.0.0.1:8000/vhf-scan.mp3"
 
 
 def test_gzip_and_unknown_mbtiles_formats(tmp_path) -> None:

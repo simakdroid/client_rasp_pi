@@ -194,11 +194,13 @@ ss -ltn | grep 30005
 ## 6. VHF AM и Icecast
 
 Каталог каналов задаёт оператор в `/etc/adsb-vhf/backend.env` переменной
-`AIRMON_RADIO_CHANNELS_JSON`. UI и rtl-airband читают один и тот же JSON:
-частоты, имена и Icecast mountpoint. `stream_url` и `mountpoint` можно не
-указывать — тогда поток будет `http://127.0.0.1:8000/vhf-XXXXXX.mp3` от
-частоты. Все каналы должны помещаться в полосу 2.56 МГц одного RTL-SDR
-(не смешивайте 125.8 МГц с 118.x на одном стике). После правки:
+`AIRMON_RADIO_CHANNELS_JSON`. UI и rtl-airband читают один и тот же JSON.
+rtl-airband работает в `mode = "scan"`: донгл перестраивается по списку, поэтому
+частоты могут быть далеко друг от друга (118.x и 123.7 вместе допустимы).
+Icecast отдаёт **один** поток `vhf-scan.mp3` на все каналы; в панели радио
+кнопка «слушать» у любой частоты открывает этот поток. Сканер останавливается
+на занятом канале, пока не закроется squelch (~5 частот в секунду в поиске).
+`stream_url` в JSON можно не указывать. После правки:
 
 ```bash
 sudo nano /etc/adsb-vhf/backend.env
@@ -207,6 +209,7 @@ sudo systemctl restart rtl-airband adsb-vhf-backend
 
 `install.sh` не перезаписывает уже существующий `backend.env`, чтобы ваши
 частоты не сбрасывались. Пример списка — в `deploy/env/backend.env.example`.
+Не больше 32 частот.
 
 Настройте секретный env-файл (пароли Icecast остаются здесь, `0600` у
 сгенерированного conf; backend читает только `stats.prom`):
@@ -357,7 +360,6 @@ journalctl -b -u readsb-adsb -u rtl-airband -u adsb-vhf-backend --no-pager
 - USB iSerial не совпадает с `SN:` у `rtl_test -t`;
 - DVB-модуль ядра всё ещё захватил USB-устройство;
 - пользователь сервиса не состоит в `rtl-sdr`;
-- частоты VHF не помещаются в одну полосу при `multichannel`;
 - Icecast не принимает source credentials;
 - страница открыта по HTTPS, а поток Icecast остался HTTP;
 - `ExecStart` backend не соответствует фактической структуре приложения.

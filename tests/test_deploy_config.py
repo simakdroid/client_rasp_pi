@@ -2,7 +2,7 @@ import json
 from importlib.resources import files
 from pathlib import Path
 
-from app.rtl_airband_conf import load_channels_json, render_conf, tuner_center_mhz
+from app.rtl_airband_conf import load_channels_json, render_conf
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "deploy" / "radio-channels.json"
@@ -31,10 +31,9 @@ def test_radio_channel_catalog_matches_env_and_rtl_airband() -> None:
     assert set(by_id) == {"tower", "ground", "approach"}
 
     freqs = [float(item["frequency_mhz"]) for item in catalog]
-    center = tuner_center_mhz(freqs)
+    assert freqs == [118.1, 118.5, 119.1]
     for item in catalog:
         frequency = float(item["frequency_mhz"])
-        assert abs(frequency - center) <= 2.56 / 2
         expected_mount = f"vhf-{int(round(frequency * 1000)):06d}.mp3"
         assert item["mountpoint"] == expected_mount
         assert str(item["stream_url"]).endswith("/" + expected_mount)
@@ -45,9 +44,9 @@ def test_radio_channel_catalog_matches_env_and_rtl_airband() -> None:
         (item["id"], float(item["frequency_mhz"])) for item in catalog
     ]
     generated = render_conf(channels_json=example_json, icecast_password="x")
-    for item in catalog:
-        assert f"freq = {float(item['frequency_mhz']):.3f};" in generated
-        assert f'mountpoint = "{item["mountpoint"]}";' in generated
+    assert 'mode = "scan";' in generated
+    assert 'mountpoint = "vhf-scan.mp3";' in generated
+    assert f"freqs = ( {', '.join(f'{freq:.3f}' for freq in freqs)} );" in generated
 
     channels = json.loads(_env_value(ROOT / ".env.example", "AIRMON_RADIO_CHANNELS_JSON"))
     assert [(item["id"], item["frequency_mhz"], item["stream_url"]) for item in channels] == [
