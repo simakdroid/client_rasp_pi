@@ -41,7 +41,7 @@ def test_render_scan_allows_wide_span() -> None:
     assert "freqs = ( 118.100, 123.700 );" in text
     assert 'labels = ( "Вышка", "ATIS" );' in text
     assert 'mountpoint = "vhf-scan.mp3";' in text
-    assert "squelch_snr_threshold = 3.0;" in text
+    assert "squelch_snr_threshold = 0.0;" in text
     assert 'password = "s3cret";' in text
     assert "centerfreq" not in text
     assert "multichannel" not in text
@@ -77,3 +77,17 @@ def test_example_backend_env_renders_scan_list() -> None:
     assert 'mountpoint = "vhf-scan.mp3";' in text
     for item in catalog:
         assert f"{float(item['frequency_mhz']):.3f}" in text
+    assert "squelch_snr_threshold = 0.0;" in text
+
+
+def test_render_reads_squelch_from_radio_document() -> None:
+    text = render_conf(
+        channels_json=json.dumps(
+            {
+                "squelch_snr_db": 8,
+                "channels": [{"id": "tower", "name": "Вышка", "frequency_mhz": 118.1}],
+            }
+        ),
+        icecast_password="x",
+    )
+    assert "squelch_snr_threshold = 8.0;" in text

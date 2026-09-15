@@ -45,7 +45,7 @@ def test_diagnostics_package_omits_secrets() -> None:
     assert "stream_url" not in blob
     assert "user:pass" not in blob
     assert payload["settings"]["admin_required"] is True
-    assert payload["app"]["version"] == "2.2.2"
+    assert payload["app"]["version"] == "2.2.3"
     assert "caption" in payload["coverage"]
     assert payload["settings"]["radio_channels"][0]["id"] == "tower"
     assert "frequency_mhz" in payload["settings"]["radio_channels"][0]

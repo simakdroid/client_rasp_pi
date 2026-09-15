@@ -21,7 +21,7 @@ from .broadcast import BroadcastHub, ClientLimitError
 from .config import Settings, get_settings
 from .diagnostics import collect_diagnostics, read_adsb_status, read_host_status
 from .gis import LayerManager, UnsupportedTileFormatError, tile_http_metadata
-from .models import AircraftTypeInput, RadioChannelInput
+from .models import AircraftTypeInput, RadioChannelInput, RadioSquelchInput
 from .radio import IcecastStreamError, RadioMonitor, open_icecast_audio
 from .radio_channels import RadioChannelCatalog
 from .raw_messages import RawMessageLog, ingest_raw_messages
@@ -138,7 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
-            allow_methods=["GET", "POST", "DELETE"],
+            allow_methods=["GET", "POST", "PUT", "DELETE"],
             allow_headers=["*"],
         )
 
@@ -165,6 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "enabled": roles["vhf_available"]
                 if settings.radio_auto_detect
                 else bool(channel_catalog.channels()),
+                "squelch_snr_db": channel_catalog.squelch_snr_db(),
                 "active_channels": sum(1 for item in quality if item.get("active") is True),
                 "channels": quality,
             },
@@ -502,9 +503,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
+    def _radio_config_payload(request: Request) -> dict[str, object]:
+        return {
+            "channels": _rewrite_config_channels(request),
+            "squelch_snr_db": channel_catalog.squelch_snr_db(),
+        }
+
     @app.get("/api/radio/config")
     async def radio_config(request: Request) -> dict[str, object]:
-        return {"channels": _rewrite_config_channels(request)}
+        return _radio_config_payload(request)
+
+    @app.put("/api/radio/config", dependencies=[Depends(require_admin)])
+    async def update_radio_settings(body: RadioSquelchInput, request: Request) -> dict[str, object]:
+        try:
+            await asyncio.to_thread(channel_catalog.set_squelch_snr_db, body.squelch_snr_db)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _radio_config_payload(request)
 
     @app.post("/api/radio/config", dependencies=[Depends(require_admin)])
     async def add_radio_channel(body: RadioChannelInput, request: Request) -> dict[str, object]:
@@ -515,7 +532,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except OSError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         radio.channels = channel_catalog.channels()
-        return {"channels": _rewrite_config_channels(request)}
+        return _radio_config_payload(request)
 
     @app.delete("/api/radio/config/{channel_id}", dependencies=[Depends(require_admin)])
     async def delete_radio_channel(channel_id: str, request: Request) -> dict[str, object]:
@@ -528,7 +545,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not deleted:
             raise HTTPException(status_code=404, detail="Radio channel not found")
         radio.channels = channel_catalog.channels()
-        return {"channels": _rewrite_config_channels(request)}
+        return _radio_config_payload(request)
 
     @app.websocket("/ws/aircraft")
     async def aircraft_socket(websocket: WebSocket) -> None:

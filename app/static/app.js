@@ -58,6 +58,7 @@
     playingChannelName: "",
     radioPlayback: "idle",
     radioError: "",
+    squelchSnrDb: 0,
     journalError: "",
     listCards: new Map(),
     archiveCards: new Map(),
@@ -163,6 +164,7 @@
       "ofm-option", "fit-aircraft", "toggle-tracks",
       "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
       "radio-channel-form", "radio-channel-name", "radio-channel-freq",
+      "radio-squelch", "radio-squelch-value",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
       "type-catalog-count", "type-catalog-form", "type-catalog-icao",
       "type-catalog-type", "type-catalog-desc", "type-catalog-list", "type-catalog-hint",
@@ -200,6 +202,10 @@
       if (button) void removeTypeCatalogEntry(button.dataset.removeIcao);
     });
     el["radio-channel-form"].addEventListener("submit", submitRadioChannel);
+    el["radio-squelch"].addEventListener("input", () => {
+      syncSquelchControl(el["radio-squelch"].value, { keepSlider: true });
+    });
+    el["radio-squelch"].addEventListener("change", () => void saveRadioSquelch());
     el["radio-list"].addEventListener("click", (event) => {
       const button = event.target.closest("[data-remove-channel]");
       if (button) void removeRadioChannel(button.dataset.removeChannel);
@@ -1464,6 +1470,7 @@
     const vhfChannels = Array.isArray(radio.channels) ? radio.channels : [];
     appendStationBlock(wrap, "Радио", [
       ["VHF", radio.enabled ? `каналов ${vhfChannels.length}, активных ${radio.active_channels ?? 0}` : "нет"],
+      ["Шумодав", squelchLabel(radio.squelch_snr_db)],
       ["Уровни", vhfChannels.length ? vhfChannels.map(formatRadioQuality).join("; ") : "—"],
     ]);
     renderRadioQualityStrip(payload);
@@ -2188,6 +2195,7 @@
       });
       state.radioChannels = channels;
       state.radioError = "";
+      syncSquelchControl(config.squelch_snr_db);
       setRadioHint("");
       setRadioAvailable(channels.length > 0 || Boolean(state.config.radio?.enabled));
       renderRadioChannels(channels);
@@ -2241,11 +2249,48 @@
     }
   }
 
-  function setRadioHint(message) {
+  function setRadioHint(message, isError = true) {
     if (!el["radio-hint"]) return;
     el["radio-hint"].hidden = !message;
     el["radio-hint"].textContent = message || "";
-    el["radio-hint"].classList.toggle("error-state", Boolean(message));
+    el["radio-hint"].classList.toggle("error-state", Boolean(message) && isError);
+  }
+
+  function squelchLabel(value) {
+    const number = finite(value) ?? 0;
+    if (number <= 0) return "выкл";
+    return `${number.toFixed(1)} дБ SNR`;
+  }
+
+  function syncSquelchControl(value, options = {}) {
+    const number = finite(value) ?? 0;
+    state.squelchSnrDb = number;
+    if (!el["radio-squelch"]) return;
+    if (!options.keepSlider && document.activeElement !== el["radio-squelch"]) {
+      el["radio-squelch"].value = String(number);
+    }
+    if (el["radio-squelch-value"]) el["radio-squelch-value"].textContent = squelchLabel(number);
+  }
+
+  async function saveRadioSquelch() {
+    const value = Number(el["radio-squelch"].value);
+    try {
+      const payload = await fetchJson("/api/radio/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ squelch_snr_db: value }),
+      });
+      syncSquelchControl(payload.squelch_snr_db);
+      const label = squelchLabel(payload.squelch_snr_db);
+      setRadioHint(
+        label === "выкл"
+          ? "Шумодав выключен, приёмник перезапускается."
+          : `Шумодав ${label}, приёмник перезапускается.`,
+        false,
+      );
+    } catch (error) {
+      setRadioHint(`Не удалось сохранить шумодав: ${error.message}`);
+    }
   }
 
   function setRadioAvailable(_available) {

@@ -44,6 +44,10 @@ class RadioChannelInput(BaseModel):
         return text
 
 
+class RadioSquelchInput(BaseModel):
+    squelch_snr_db: float = Field(ge=0, le=30, allow_inf_nan=False)
+
+
 class AircraftTypeInput(BaseModel):
     icao: str
     type_code: str = Field(max_length=16)

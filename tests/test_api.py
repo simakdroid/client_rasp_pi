@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -70,6 +72,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="session-upload"' in page
         assert 'id="coverage-bands"' not in page
         assert 'id="radio-quality"' in page
+        assert 'id="radio-squelch"' in page
         assert 'data-journal-mode="geofence"' in page
         assert 'id="gis-diagnostics"' in page
         station = client.get("/api/station").json()
@@ -155,8 +158,9 @@ def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
         radio_channels_json='[{"id":"tower","name":"Вышка","frequency_mhz":118.1}]',
     )
     with TestClient(create_app(settings)) as client:
-        listed = client.get("/api/radio/config").json()["channels"]
-        assert listed[0]["frequency_mhz"] == 118.1
+        listed = client.get("/api/radio/config").json()
+        assert listed["squelch_snr_db"] == 0
+        assert listed["channels"][0]["frequency_mhz"] == 118.1
         added = client.post(
             "/api/radio/config",
             json={"name": "ATIS", "frequency_mhz": 123.7},
@@ -164,6 +168,7 @@ def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
         assert added.status_code == 200
         freqs = [item["frequency_mhz"] for item in added.json()["channels"]]
         assert 118.1 in freqs and 123.7 in freqs
+        assert added.json()["squelch_snr_db"] == 0
         channel_id = next(
             item["id"] for item in added.json()["channels"] if item["frequency_mhz"] == 123.7
         )
@@ -171,6 +176,12 @@ def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
         assert deleted.status_code == 200
         leftover = [item["frequency_mhz"] for item in deleted.json()["channels"]]
         assert leftover == [118.1]
+        squelch = client.put("/api/radio/config", json={"squelch_snr_db": 8})
+        assert squelch.status_code == 200
+        assert squelch.json()["squelch_snr_db"] == 8
+        saved = json.loads((tmp_path / "radio-channels.json").read_text(encoding="utf-8"))
+        assert saved["squelch_snr_db"] == 8
+        assert [item["frequency_mhz"] for item in saved["channels"]] == [118.1]
     settings = Settings(
         layers_dir=tmp_path,
         readsb_json_path=tmp_path / "missing-aircraft.json",

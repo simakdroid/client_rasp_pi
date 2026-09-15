@@ -15,6 +15,8 @@ STATS_PATH = "/run/rtl-airband/stats.prom"
 DEFAULT_BACKEND_ENV = Path("/etc/adsb-vhf/backend.env")
 DEFAULT_OUTPUT = Path("/run/rtl-airband/rtl_airband.conf")
 MAX_CHANNELS = 32
+DEFAULT_SQUELCH_SNR_DB = 0.0
+MAX_SQUELCH_SNR_DB = 30.0
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -55,25 +57,72 @@ def load_channels_json(
     return parsed.get("AIRMON_RADIO_CHANNELS_JSON", "[]")
 
 
-def parse_channels(channels_json: str) -> list[RadioChannel]:
-    try:
-        payload = json.loads(channels_json)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"AIRMON_RADIO_CHANNELS_JSON is not valid JSON: {exc}") from exc
-    if not isinstance(payload, list):
+def parse_radio_document(
+    payload: object,
+    *,
+    require_channels: bool = True,
+) -> tuple[list[RadioChannel], float]:
+    if isinstance(payload, list):
+        channels_payload = payload
+        squelch = DEFAULT_SQUELCH_SNR_DB
+    elif isinstance(payload, dict):
+        raw_channels = payload.get("channels")
+        if raw_channels is None:
+            channels_payload = []
+        elif isinstance(raw_channels, list):
+            channels_payload = raw_channels
+        else:
+            raise ValueError("channels must contain a JSON array")
+        squelch = normalize_squelch_snr_db(payload.get("squelch_snr_db", DEFAULT_SQUELCH_SNR_DB))
+    else:
         raise ValueError("AIRMON_RADIO_CHANNELS_JSON must contain a JSON array")
-    if not payload:
+    if require_channels and not channels_payload:
         raise ValueError("AIRMON_RADIO_CHANNELS_JSON must list at least one channel")
-    if len(payload) > MAX_CHANNELS:
+    if not isinstance(channels_payload, list):
+        raise ValueError("AIRMON_RADIO_CHANNELS_JSON must contain a JSON array")
+    if len(channels_payload) > MAX_CHANNELS:
         raise ValueError(f"AIRMON_RADIO_CHANNELS_JSON supports at most {MAX_CHANNELS} channels")
-    channels = [RadioChannel.model_validate(item) for item in payload]
+    channels = [_parse_channel_item(item) for item in channels_payload]
     ids = [channel.id for channel in channels]
     if len(set(ids)) != len(ids):
         raise ValueError("channel id values must be unique")
     freqs = [channel.frequency_mhz for channel in channels]
     if len(set(freqs)) != len(freqs):
         raise ValueError("channel frequencies must be unique")
+    return channels, squelch
+
+
+def parse_radio_file(channels_json: str, *, require_channels: bool = True) -> tuple[list[RadioChannel], float]:
+    try:
+        payload = json.loads(channels_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"AIRMON_RADIO_CHANNELS_JSON is not valid JSON: {exc}") from exc
+    return parse_radio_document(payload, require_channels=require_channels)
+
+
+def parse_channels(channels_json: str) -> list[RadioChannel]:
+    channels, _squelch = parse_radio_file(channels_json)
     return channels
+
+
+def _parse_channel_item(item: object) -> RadioChannel:
+    if not isinstance(item, dict):
+        raise ValueError("each radio channel must be an object")
+    return RadioChannel.model_validate(item)
+
+
+def normalize_squelch_snr_db(value: object) -> float:
+    if value is None or value == "":
+        return DEFAULT_SQUELCH_SNR_DB
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("squelch_snr_db must be a number") from exc
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError("squelch_snr_db must be finite")
+    if number < 0 or number > MAX_SQUELCH_SNR_DB:
+        raise ValueError(f"squelch_snr_db must be between 0 and {MAX_SQUELCH_SNR_DB}")
+    return round(number, 1)
 
 
 def libconfig_string(value: str) -> str:
@@ -107,8 +156,10 @@ def render_conf(
     icecast_port: str = "8000",
     icecast_user: str = "source",
     icecast_password: str = "",
+    squelch_snr_db: float | None = None,
 ) -> str:
-    channels = parse_channels(channels_json)
+    channels, file_squelch = parse_radio_file(channels_json)
+    squelch = file_squelch if squelch_snr_db is None else normalize_squelch_snr_db(squelch_snr_db)
     serial = _strip(vhf_serial, "0118") or "0118"
     host = _strip(icecast_host, "127.0.0.1") or "127.0.0.1"
     port = _strip(icecast_port, "8000") or "8000"
@@ -136,7 +187,7 @@ def render_conf(
         f"        freqs = ( {_freq_list(channels)} );\n"
         f"        labels = ( {_label_list(channels)} );\n"
         '        modulation = "am";\n'
-        "        squelch_snr_threshold = 3.0;\n"
+        f"        squelch_snr_threshold = {squelch:.1f};\n"
         "        outputs:\n"
         "        (\n"
         "          {\n"
