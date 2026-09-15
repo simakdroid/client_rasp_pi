@@ -1,7 +1,12 @@
 # Raspberry Pi Air Monitor
 
-Версия **2.2**. Локальное модульное приложение для Raspberry Pi 5: ADS‑B через `readsb`,
+Версия **2.2.1**. Локальное модульное приложение для Raspberry Pi 5: ADS‑B через `readsb`,
 авиационный VHF AM через `rtl_airband`/Icecast и интерактивная GIS-карта.
+
+## Что изменилось в 2.2.1
+
+Плеер VHF больше не открывает Icecast на порту 8000: аудио идёт через
+`GET /api/radio/stream` с той же страницы, что и карта.
 
 ## Что изменилось в 2.2
 
@@ -204,9 +209,9 @@ curl http://127.0.0.1:8080/api/health
   не дал тип). Писатель файла — сам процесс; внешние правки подхватываются
   фоновым `refresh`, а не GET/lookup. `POST`/`DELETE` требуют админ-токен.
 - `GET /api/radio/channels` — частоты, stream URL и опциональная активность.
-  Loopback в `stream_url` подменяется на Host запроса, если UI открыт не с
-  localhost; порт Icecast сохраняется. HTTPS-страница + HTTP Icecast — mixed
-  content. Уровни `level_dbfs` — качество VHF, не наличие Icecast mount.
+  Плеер ходит в `GET /api/radio/stream`: бэкенд проксирует локальный Icecast
+  `vhf-scan.mp3`, браузеру порт 8000 не нужен. Уровни `level_dbfs` — качество
+  VHF, не наличие Icecast mount.
 - `GET /api/health` — readiness процесса.
 
 Активность VHF берётся не из Icecast (наличие mount не означает открытый

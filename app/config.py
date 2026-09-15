@@ -152,6 +152,8 @@ class Settings(BaseSettings):
     )
     usb_sysfs_path: Path = Path("/sys/bus/usb/devices")
     icecast_status_url: HttpUrl | None = None
+    radio_icecast_host: str = "127.0.0.1"
+    radio_icecast_port: int = Field(default=8000, ge=1, le=65535)
 
     @property
     def radio_channels(self) -> list[RadioChannel]:

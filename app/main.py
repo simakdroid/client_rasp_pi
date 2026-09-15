@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -22,7 +22,7 @@ from .config import Settings, get_settings
 from .diagnostics import collect_diagnostics, read_adsb_status, read_host_status
 from .gis import LayerManager, UnsupportedTileFormatError, tile_http_metadata
 from .models import AircraftTypeInput, RadioChannelInput
-from .radio import RadioMonitor, rewrite_loopback_stream_url
+from .radio import IcecastStreamError, RadioMonitor, open_icecast_audio
 from .radio_channels import RadioChannelCatalog
 from .raw_messages import RawMessageLog, ingest_raw_messages
 from .runtime import RuntimeStatus, run_supervised
@@ -454,21 +454,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/radio/channels")
     async def radio_channels(request: Request) -> list[dict[str, object]]:
         channels = await radio.status()
-        host = request.url.hostname or ""
+        stream_url = _public_stream_url(request)
         for item in channels:
-            stream_url = item.get("stream_url")
-            if isinstance(stream_url, str):
-                item["stream_url"] = rewrite_loopback_stream_url(stream_url, host)
+            item["stream_url"] = stream_url
         return channels
 
+    def _public_stream_url(request: Request) -> str:
+        return str(request.base_url).rstrip("/") + "/api/radio/stream"
+
     def _rewrite_config_channels(request: Request) -> list[dict[str, object]]:
-        host = request.url.hostname or ""
+        stream_url = _public_stream_url(request)
         items = channel_catalog.public_list()
         for item in items:
-            stream_url = item.get("stream_url")
-            if isinstance(stream_url, str):
-                item["stream_url"] = rewrite_loopback_stream_url(stream_url, host)
+            item["stream_url"] = stream_url
         return items
+
+    @app.get("/api/radio/stream")
+    async def radio_stream() -> StreamingResponse:
+        try:
+            reader, writer, leftover, content_type = await open_icecast_audio(
+                host=settings.radio_icecast_host,
+                port=settings.radio_icecast_port,
+            )
+        except IcecastStreamError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+        async def body() -> AsyncIterator[bytes]:
+            try:
+                if leftover:
+                    yield leftover
+                while True:
+                    chunk = await reader.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+
+        return StreamingResponse(
+            body(),
+            media_type=content_type or "audio/mpeg",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/api/radio/config")
     async def radio_config(request: Request) -> dict[str, object]:

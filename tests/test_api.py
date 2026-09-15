@@ -109,6 +109,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "aircraftTypeCode(aircraft)" in script
         assert "latNum" in script
         assert "next_after_id" in script
+        assert "/api/radio/stream" in script
         diagnostics = client.get("/api/station/diagnostics").json()
         blob = str(diagnostics)
         assert "admin_token" not in blob
@@ -180,14 +181,17 @@ def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
             '[{"id":"tower","name":"Вышка","frequency_mhz":118.1,'
             '"stream_url":"http://127.0.0.1:8000/vhf-118100.mp3"}]'
         ),
+        radio_icecast_port=59999,
     )
     with TestClient(create_app(settings), base_url="http://192.168.1.10:8080") as client:
         channels = client.get("/api/radio/channels").json()
-    assert channels[0]["stream_url"] == "http://192.168.1.10:8000/vhf-scan.mp3"
+    assert channels[0]["stream_url"] == "http://192.168.1.10:8080/api/radio/stream"
 
     with TestClient(create_app(settings), base_url="http://127.0.0.1:8080") as client:
         local = client.get("/api/radio/channels").json()
-    assert local[0]["stream_url"] == "http://127.0.0.1:8000/vhf-scan.mp3"
+        assert local[0]["stream_url"] == "http://127.0.0.1:8080/api/radio/stream"
+        missing = client.get("/api/radio/stream")
+        assert missing.status_code == 503
 
 
 def test_gzip_and_unknown_mbtiles_formats(tmp_path) -> None:

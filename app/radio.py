@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 
-from .config import RadioChannel
+from .config import SCAN_MOUNTPOINT, RadioChannel
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -166,6 +167,88 @@ def _parse_prometheus_stats(text: str) -> dict[str, dict[str, float]]:
 
 def _frequency_key(value: float) -> str:
     return f"{value:.3f}"
+
+
+class IcecastStreamError(Exception):
+    def __init__(self, message: str, *, status_code: int = 503) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+async def open_icecast_audio(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    mount: str = SCAN_MOUNTPOINT,
+    timeout_s: float = 4.0,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes, str]:
+    """Connect to a local Icecast mount and return the raw MP3 body start."""
+    target = (mount or SCAN_MOUNTPOINT).strip().lstrip("/")
+    if target != SCAN_MOUNTPOINT:
+        raise IcecastStreamError("неизвестный Icecast mount", status_code=404)
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=timeout_s,
+        )
+    except (OSError, asyncio.TimeoutError) as exc:
+        raise IcecastStreamError(
+            f"Icecast не отвечает на {host}:{port}",
+            status_code=503,
+        ) from exc
+    try:
+        path = f"/{target}"
+        writer.write(
+            f"GET {path} HTTP/1.0\r\n"
+            f"Host: {host}:{port}\r\n"
+            "User-Agent: raspi-air-monitor\r\n"
+            "Icy-MetaData: 0\r\n"
+            "Accept: */*\r\n"
+            "Connection: close\r\n"
+            "\r\n".encode("ascii")
+        )
+        await asyncio.wait_for(writer.drain(), timeout=timeout_s)
+        header_blob = b""
+        while b"\r\n\r\n" not in header_blob and b"\n\n" not in header_blob:
+            chunk = await asyncio.wait_for(reader.read(1024), timeout=timeout_s)
+            if not chunk:
+                break
+            header_blob += chunk
+            if len(header_blob) > 8192:
+                raise IcecastStreamError("Icecast вернул слишком большой заголовок")
+        separator = b"\r\n\r\n" if b"\r\n\r\n" in header_blob else b"\n\n"
+        if separator not in header_blob:
+            raise IcecastStreamError("Icecast не вернул HTTP-заголовки")
+        raw_headers, leftover = header_blob.split(separator, 1)
+        status_line, *header_lines = raw_headers.split(b"\n")
+        status_text = status_line.decode("latin-1", errors="replace").strip()
+        parts = status_text.split()
+        try:
+            status = int(parts[1]) if len(parts) >= 2 else 0
+        except ValueError:
+            status = 0
+        if status != 200:
+            raise IcecastStreamError(
+                "поток vhf-scan.mp3 не подключён — rtl-airband не залогинен в Icecast",
+                status_code=502,
+            )
+        content_type = "audio/mpeg"
+        for line in header_lines:
+            name, _, value = line.decode("latin-1", errors="replace").partition(":")
+            if name.strip().lower() == "content-type" and value.strip():
+                content_type = value.strip()
+                break
+        return reader, writer, leftover, content_type
+    except IcecastStreamError:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        raise
+    except (OSError, asyncio.TimeoutError) as exc:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        raise IcecastStreamError("Icecast оборвал соединение", status_code=502) from exc
 
 
 def rewrite_loopback_stream_url(url: str, public_host: str) -> str:

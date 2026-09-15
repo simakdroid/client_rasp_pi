@@ -146,7 +146,7 @@
           <div class="quality-strip" id="radio-quality">
             <p class="empty-state">Ожидание метрик ADS-B и VHF…</p>
           </div>
-          <p class="journal-hint">Сканер: один поток <code>vhf-scan.mp3</code> на весь список. Частоты правятся здесь и сохраняются на станции.</p>
+          <p class="journal-hint">Сканер отдаёт один поток на все частоты через приложение (<code>/api/radio/stream</code>). Icecast на станции слушает только localhost — браузеру порт 8000 не нужен. Частоты правятся здесь и сохраняются на станции.</p>
           <p class="journal-hint" id="radio-hint" hidden></p>
           <form id="radio-channel-form" class="type-catalog__form">
             <label>

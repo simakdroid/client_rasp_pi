@@ -2286,8 +2286,6 @@
       play.className = "radio-channel__play";
       play.textContent = "▶";
       play.title = "Слушать канал";
-      const streamUrl = rewriteStreamUrl(channel.stream_url ?? channel.url);
-      play.disabled = !streamUrl;
       play.addEventListener("click", () => playRadioChannel(channel, row));
       const remove = document.createElement("button");
       remove.type = "button";
@@ -2308,19 +2306,19 @@
     return "Активность неизвестна";
   }
 
-  function rewriteStreamUrl(url) {
-    if (!url) return url;
-    try {
-      const parsed = new URL(url, location.href);
-      const pageHost = location.hostname;
-      const localPage = pageHost === "127.0.0.1" || pageHost === "localhost";
-      if (!localPage && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost")) {
-        parsed.hostname = pageHost;
-      }
-      return parsed.href;
-    } catch (_error) {
-      return url;
+  function radioStreamUrl() {
+    return new URL("/api/radio/stream", location.href).href;
+  }
+
+  function radioPlaybackErrorText(error) {
+    if (error && error.name === "NotAllowedError") {
+      return "браузер блокирует автозапуск — нажмите Play на плеере";
     }
+    const media = el["radio-audio"]?.error;
+    if (media && (media.code === 2 || media.code === 4)) {
+      return "нет потока Icecast: проверьте icecast2 и rtl-airband (mount vhf-scan.mp3)";
+    }
+    return "ошибка потока";
   }
 
   function bindRadioAudio() {
@@ -2328,6 +2326,7 @@
     if (!audio) return;
     audio.addEventListener("playing", () => {
       state.radioPlayback = "playing";
+      state.radioError = "";
       updateNowPlaying();
     });
     audio.addEventListener("waiting", () => {
@@ -2340,6 +2339,7 @@
     });
     audio.addEventListener("error", () => {
       state.radioPlayback = "error";
+      state.radioError = radioPlaybackErrorText();
       updateNowPlaying();
     });
   }
@@ -2355,7 +2355,7 @@
       playing: "",
       waiting: " (буфер…)",
       ended: " (остановлен)",
-      error: " (ошибка потока)",
+      error: ` (${state.radioError || "ошибка потока"})`,
       idle: "",
     };
     el["now-playing"].textContent =
@@ -2363,22 +2363,20 @@
   }
 
   async function playRadioChannel(channel, row) {
-    const streamUrl = rewriteStreamUrl(channel.stream_url ?? channel.url);
-    if (!streamUrl) return;
+    const streamUrl = radioStreamUrl();
     state.playingChannelId = text(channel.id, "");
     state.playingChannelName = text(channel.name ?? channel.label, "VHF-канал");
     state.radioPlayback = "waiting";
+    state.radioError = "";
     document.querySelectorAll(".radio-channel").forEach((item) => item.classList.remove("is-playing"));
     row.classList.add("is-playing");
     updateNowPlaying();
-    const resolved = new URL(streamUrl, location.href).href;
-    if (el["radio-audio"].src !== resolved) {
-      el["radio-audio"].src = streamUrl;
-    }
+    el["radio-audio"].src = streamUrl;
     try {
       await el["radio-audio"].play();
     } catch (error) {
       state.radioPlayback = "error";
+      state.radioError = radioPlaybackErrorText(error);
       updateNowPlaying();
     }
   }

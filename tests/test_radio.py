@@ -1,7 +1,15 @@
+import asyncio
+
 import pytest
 
 from app.config import RadioChannel
-from app.radio import RadioMonitor, _parse_prometheus_stats, rewrite_loopback_stream_url
+from app.radio import (
+    IcecastStreamError,
+    RadioMonitor,
+    _parse_prometheus_stats,
+    open_icecast_audio,
+    rewrite_loopback_stream_url,
+)
 
 
 def test_parse_rtl_airband_prometheus_stats() -> None:
@@ -95,6 +103,54 @@ async def test_radio_quality_snapshot_omits_stream_url() -> None:
     quality = await monitor.quality_snapshot()
     assert quality[0]["id"] == "tower"
     assert "stream_url" not in quality[0]
+
+
+@pytest.mark.asyncio
+async def test_open_icecast_audio_streams_mp3_body() -> None:
+    async def handler(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\n\r\nID3fake")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        reader, writer, leftover, content_type = await open_icecast_audio(
+            host="127.0.0.1",
+            port=port,
+        )
+        try:
+            body = leftover + await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+        assert content_type == "audio/mpeg"
+        assert body.startswith(b"ID3")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_open_icecast_audio_maps_missing_mount() -> None:
+    async def handler(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.0 404 File Not Found\r\n\r\n")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        with pytest.raises(IcecastStreamError) as caught:
+            await open_icecast_audio(host="127.0.0.1", port=port)
+        assert caught.value.status_code == 502
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def _add_rtl_device(root, name: str, serial: str) -> None:

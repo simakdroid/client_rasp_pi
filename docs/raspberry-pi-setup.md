@@ -233,11 +233,10 @@ Unit перед каждым запуском вызывает `render-rtl-airba
 текущий dBFS без выдачи UI системных прав.
 
 С телефона или другого ПК в LAN открывайте UI по имени хоста Pi, не по
-`127.0.0.1` на клиенте. `GET /api/radio/channels` подменяет loopback в
-`stream_url` на Host запроса, порт Icecast `8000` сохраняется. Клиентский
-`rewriteStreamUrl` остаётся запасным вариантом. Страница по HTTPS и Icecast по
-HTTP — mixed content: браузер заблокирует поток; нужен reverse proxy с TLS
-и для UI, и для аудио, либо HTTP на всей станции.
+`127.0.0.1` на клиенте. Плеер берёт `GET /api/radio/stream` с того же origin,
+что и страница: бэкенд сам читает `http://127.0.0.1:8000/vhf-scan.mp3`.
+Icecast может слушать только localhost. Если страница по HTTPS, аудио тоже
+идёт по HTTPS через приложение.
 
 ## 7. Backend
 
