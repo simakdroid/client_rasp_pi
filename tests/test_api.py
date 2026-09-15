@@ -68,7 +68,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'data-tab="station"' in page
         assert 'id="panel-station"' in page
         assert 'id="session-upload"' in page
-        assert 'id="coverage-bands"' in page
+        assert 'id="coverage-bands"' not in page
         assert 'id="radio-quality"' in page
         assert 'data-journal-mode="geofence"' in page
         assert 'id="gis-diagnostics"' in page
@@ -95,8 +95,8 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "version" in types
         assert coverage["samples"] == 0
         assert client.post("/api/coverage/reset").json()["samples"] == 0
-        assert 'id="toggle-coverage"' in page
-        assert 'id="coverage-stats"' in page
+        assert 'id="toggle-coverage"' not in page
+        assert 'id="coverage-stats"' not in page
         assert client.get("/app.js").status_code == 200
         assert coverage["saved"] is True
         assert coverage.get("save_error") is None
@@ -104,6 +104,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert client.get("/vendor/leaflet/leaflet.css").status_code == 200
         assert 'id="diagnostics-download"' in page
         script = client.get("/app.js").text
+        assert "updateArchiveMarker" not in script
         assert "value >= 5000 ? \"F\" : \"A\"" not in script
         assert "aircraftTypeCode(aircraft)" in script
         assert "latNum" in script

@@ -32,9 +32,6 @@
     wsWatchdogTimer: null,
     lastWsMessageAt: 0,
     tracksVisible: true,
-    coverageVisible: true,
-    coverageLayer: null,
-    coverageRevision: -1,
     mapUserMoved: false,
     autoFitting: false,
     selectedIcao: null,
@@ -126,7 +123,6 @@
       if (state.syncMode !== "live") void loadInitialAircraft();
     }, 2500);
     const pollRadio = startPolling(loadRadioChannels, 5000);
-    const pollCoverage = startPolling(loadCoverage, 5000);
     const pollTypes = startPolling(loadTypeCatalog, 5000);
     const pollJournal = startPolling(loadJournal, 1000);
     const pollHealth = startPolling(refreshHealth, 5000);
@@ -135,7 +131,6 @@
     void pollLayers();
     void pollStation();
     void pollRadio();
-    void pollCoverage();
     void pollTypes();
     void pollJournal();
     void pollHealth();
@@ -165,8 +160,7 @@
       "visible-count", "aircraft-search", "aircraft-list",
       "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
-      "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-coverage",
-      "coverage-visible", "coverage-stats", "coverage-caption", "coverage-bands", "coverage-hours", "reset-coverage",
+      "ofm-option", "fit-aircraft", "toggle-tracks",
       "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
       "radio-channel-form", "radio-channel-name", "radio-channel-freq",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
@@ -192,11 +186,6 @@
     });
     el["fit-aircraft"].addEventListener("click", fitAircraft);
     el["toggle-tracks"].addEventListener("click", toggleTracks);
-    el["toggle-coverage"].addEventListener("click", () => setCoverageVisible(!state.coverageVisible));
-    el["coverage-visible"].addEventListener("change", () => {
-      setCoverageVisible(el["coverage-visible"].checked);
-    });
-    el["reset-coverage"].addEventListener("click", resetCoverage);
     el["reload-layers"].addEventListener("click", () => void loadLayers());
     el["clear-journal"].addEventListener("click", clearJournal);
     el["type-catalog-form"].addEventListener("submit", submitTypeCatalog);
@@ -280,9 +269,6 @@
       zoomControl: true,
       preferCanvas: true,
     });
-    state.map.createPane("coverage");
-    state.map.getPane("coverage").style.zIndex = 350;
-    state.map.getPane("coverage").style.pointerEvents = "none";
     state.map.on("dragstart", () => {
       if (!state.autoFitting) state.mapUserMoved = true;
     });
@@ -502,7 +488,7 @@
     }
     const merged = { ...(state.archived.get(key) || {}), ...aircraft, icao, status: "archived" };
     state.archived.set(key, merged);
-    updateArchiveMarker(merged);
+    removeArchiveMarker(key);
     if (render) finishAircraftUpdate();
   }
 
@@ -510,9 +496,7 @@
     const key = text(keyValue, "");
     if (!key) return;
     state.archived.delete(key);
-    const marker = state.archiveMarkers.get(key);
-    if (marker) state.map.removeLayer(marker);
-    state.archiveMarkers.delete(key);
+    removeArchiveMarker(key);
     if (state.selectedIcao === key) state.selectedIcao = null;
     if (render) finishAircraftUpdate();
   }
@@ -524,6 +508,12 @@
     if (track) state.map.removeLayer(track);
     state.markers.delete(icao);
     state.tracks.delete(icao);
+  }
+
+  function removeArchiveMarker(key) {
+    const marker = state.archiveMarkers.get(key);
+    if (marker) state.map.removeLayer(marker);
+    state.archiveMarkers.delete(key);
   }
 
   function finishAircraftUpdate() {
@@ -571,40 +561,6 @@
         icao === state.selectedIcao,
       );
     }
-  }
-
-  function updateArchiveMarker(aircraft) {
-    const key = archiveKey(aircraft);
-    const lat = latNum(aircraft.lat ?? aircraft.latitude);
-    const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    const existing = state.archiveMarkers.get(key);
-    if (lat === null || lon === null) {
-      if (existing) state.map.removeLayer(existing);
-      state.archiveMarkers.delete(key);
-      return;
-    }
-    const altitude = aircraftAltitude(aircraft);
-    const rotation = finite(
-      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.true_heading_deg ?? aircraft.heading,
-    ) ?? 0;
-    const icon = aircraftIcon(altitudeColor(altitude), rotation, true);
-    if (!existing) {
-      const marker = L.marker([lat, lon], {
-        icon,
-        zIndexOffset: Math.round((altitude || 0) / 4) - 200,
-        riseOnHover: true,
-        opacity: .7,
-      }).addTo(state.map);
-      marker.on("click", () => selectAircraft(key));
-      marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft, true));
-      marker.bindPopup(createTooltip(aircraft), { className: "aircraft-tooltip" });
-      state.archiveMarkers.set(key, marker);
-      return;
-    }
-    existing.setLatLng([lat, lon]);
-    existing.setIcon(icon);
-    existing.setTooltipContent(createDataBlock(aircraft));
-    existing.setPopupContent(createTooltip(aircraft));
   }
 
   function dataBlockOptions(aircraft, archived = false) {
@@ -762,132 +718,6 @@
     el["toggle-tracks"].setAttribute("aria-pressed", String(state.tracksVisible));
   }
 
-  function setCoverageVisible(visible) {
-    state.coverageVisible = Boolean(visible);
-    el["toggle-coverage"].classList.toggle("is-active", state.coverageVisible);
-    el["toggle-coverage"].setAttribute("aria-pressed", String(state.coverageVisible));
-    el["coverage-visible"].checked = state.coverageVisible;
-    if (!state.coverageLayer || !state.map) return;
-    if (state.coverageVisible && !state.map.hasLayer(state.coverageLayer)) {
-      state.coverageLayer.addTo(state.map);
-    }
-    if (!state.coverageVisible && state.map.hasLayer(state.coverageLayer)) {
-      state.map.removeLayer(state.coverageLayer);
-    }
-  }
-
-  async function loadCoverage() {
-    try {
-      const payload = await fetchJson("/api/coverage");
-      renderCoverage(payload);
-    } catch (error) {
-      setCoverageStatus(`Не удалось загрузить розу покрытия: ${error.message}`, true);
-    }
-  }
-
-  async function resetCoverage() {
-    if (!window.confirm("Сбросить накопленную розу покрытия?")) return;
-    try {
-      const payload = await fetchJson("/api/coverage/reset", { method: "POST" });
-      state.coverageRevision = -1;
-      renderCoverage(payload);
-    } catch (error) {
-      setCoverageStatus(`Не удалось сбросить розу покрытия: ${error.message}`, true);
-    }
-  }
-
-  function setCoverageStatus(stats, isError = false) {
-    if (!el["coverage-stats"]) return;
-    el["coverage-stats"].textContent = stats;
-    el["coverage-stats"].classList.toggle("error-state", Boolean(isError));
-  }
-
-  function renderCoverage(payload) {
-    const persistError = Boolean(payload?.load_error || payload?.save_error);
-    if (el["coverage-caption"]) {
-      el["coverage-caption"].textContent =
-        payload?.caption || "Исторический максимум дальности, не гарантированная зона приёма.";
-    }
-    setCoverageStatus(formatCoverageStats(payload), persistError);
-    renderCoverageBreakdown(el["coverage-bands"], payload?.altitude_bands, "пояса");
-    renderCoverageBreakdown(el["coverage-hours"], payload?.hourly, "часы");
-    const revision = finite(payload?.revision) ?? 0;
-    const points = Array.isArray(payload?.points) ? payload.points.filter((point) => (
-      Array.isArray(point) && latNum(point[0]) !== null && lonNum(point[1]) !== null
-    )) : [];
-    if (revision === state.coverageRevision && state.coverageLayer) return;
-    state.coverageRevision = revision;
-    if (!state.map) return;
-    if (points.length < 4) {
-      if (state.coverageLayer) {
-        state.map.removeLayer(state.coverageLayer);
-        state.coverageLayer = null;
-      }
-      return;
-    }
-    if (state.coverageLayer) {
-      state.coverageLayer.setLatLngs(points);
-    } else {
-      state.coverageLayer = L.polygon(points, {
-        pane: "coverage",
-        color: "#ffc857",
-        weight: 2,
-        fillColor: "#ffc857",
-        fillOpacity: .14,
-        interactive: false,
-      });
-    }
-    setCoverageVisible(state.coverageVisible);
-  }
-
-  function formatCoverageStats(payload) {
-    const samples = finite(payload?.samples) ?? 0;
-    const filled = finite(payload?.filled_bins) ?? 0;
-    const maxRange = finite(payload?.max_range_km);
-    if (!samples && !(finite(payload?.observations) > 0)) {
-      return "Накопление начнётся с первым бортом.";
-    }
-    const rangeText = maxRange === null ? "—" : formatDistance(maxRange);
-    const observations = finite(payload?.observations) ?? samples;
-    const updates = finite(payload?.range_updates) ?? samples;
-    let started = "";
-    if (payload?.started_at) {
-      const date = new Date(payload.started_at);
-      if (!Number.isNaN(date.getTime())) {
-        started = ` с ${date.toLocaleDateString("ru-RU", {
-          day: "2-digit",
-          month: "2-digit",
-          timeZone: "UTC",
-        })} ${formatUtcTime(date)} UTC`;
-      }
-    }
-    return `макс. ${rangeText} · ${filled} из 360 направлений · ${updates} обновлений максимума · ${observations} наблюдений${started}${persistHint(payload)}`;
-  }
-
-  function renderCoverageBreakdown(node, rows, kind) {
-    if (!node) return;
-    const items = Array.isArray(rows) ? rows.filter((row) => (row.observations || 0) > 0) : [];
-    node.hidden = items.length === 0;
-    node.replaceChildren();
-    items.forEach((row) => {
-      const item = document.createElement("li");
-      const label = document.createElement("span");
-      label.textContent = row.label || row.hour || row.id || kind;
-      const value = document.createElement("span");
-      const range = finite(row.max_range_km);
-      value.textContent = `${row.observations || 0} набл. · ${range === null ? "—" : formatDistance(range)}`;
-      item.append(label, value);
-      node.append(item);
-    });
-  }
-
-  function persistHint(payload) {
-    const notes = [];
-    if (payload?.load_error) notes.push("файл покрытия повреждён, начато заново");
-    if (payload?.save_error) notes.push(`не сохранено: ${payload.save_error}`);
-    return notes.length ? ` · ${notes.join(" · ")}` : "";
-  }
-
   function fitAircraft() {
     const positions = [...state.markers.values()].map((marker) => marker.getLatLng());
     if (!positions.length || !state.map) return;
@@ -915,21 +745,17 @@
     state.selectedIcao = icao;
     if (previous && previous !== icao) refreshAircraftMarker(previous);
     refreshAircraftMarker(icao);
-    const marker = state.markers.get(icao) || state.archiveMarkers.get(icao);
+    const marker = state.markers.get(icao);
     if (marker) state.map.panTo(marker.getLatLng());
     renderAircraftList();
   }
 
   function refreshAircraftMarker(icao) {
     const live = state.aircraft.get(icao);
-    if (live) {
-      const lat = latNum(live.lat ?? live.latitude);
-      const lon = lonNum(live.lon ?? live.lng ?? live.longitude);
-      if (lat !== null && lon !== null) updateMarker(live, lat, lon);
-      return;
-    }
-    const archived = state.archived.get(icao);
-    if (archived) updateArchiveMarker(archived);
+    if (!live) return;
+    const lat = latNum(live.lat ?? live.latitude);
+    const lon = lonNum(live.lon ?? live.lng ?? live.longitude);
+    if (lat !== null && lon !== null) updateMarker(live, lat, lon);
   }
 
   function matchesSearch(aircraft) {
@@ -1087,7 +913,6 @@
       const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
       if (lat !== null && lon !== null) updateMarker(aircraft, lat, lon);
     });
-    state.archived.forEach((aircraft) => updateArchiveMarker(aircraft));
   }
 
   function typeCatalogSignature() {
@@ -1596,7 +1421,6 @@
     const adsb = payload.adsb || {};
     const source = payload.source || {};
     const gis = payload.gis || {};
-    const coverage = payload.coverage || {};
     const radio = payload.radio || {};
     const host = payload.host || {};
     const session = payload.session || {};
@@ -1637,11 +1461,6 @@
       ["Загрузка", `${gis.load_ms ?? 0} мс · слоёв ${gis.layer_count ?? 0} · объектов ${gis.feature_count ?? 0} · зон ${gis.geofence_count ?? 0}`],
       ["Ошибки", gisErrors.length ? gisErrors.map(formatGisError).join("; ") : "нет"],
     ], gisErrors.length > 0);
-    appendStationBlock(wrap, "Покрытие", [
-      ["Смысл", coverage.caption || "Исторический максимум дальности, не гарантированная зона приёма"],
-      ["Роза", `макс. ${coverage.max_range_km ?? 0} км · ${coverage.filled_bins ?? 0}/360 · набл. ${coverage.observations ?? 0}`],
-      ["Запись", coverage.save_error || coverage.load_error || (coverage.saved ? "сохранено" : "ожидает запись")],
-    ], Boolean(coverage.save_error || coverage.load_error));
     const vhfChannels = Array.isArray(radio.channels) ? radio.channels : [];
     appendStationBlock(wrap, "Радио", [
       ["VHF", radio.enabled ? `каналов ${vhfChannels.length}, активных ${radio.active_channels ?? 0}` : "нет"],

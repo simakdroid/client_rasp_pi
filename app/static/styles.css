@@ -189,28 +189,6 @@ h1, h2, h3, p { margin: 0; }
 
 .icon-button:hover, .icon-button.is-active { border-color: var(--accent); color: var(--accent); }
 
-.coverage-disclaimer {
-  margin: 0 0 8px;
-  color: var(--warning);
-  font-size: 11px;
-  line-height: 1.4;
-}
-.coverage-breakdown {
-  margin: 6px 0 8px;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.coverage-breakdown li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--line);
-}
 .quality-strip {
   display: grid;
   gap: 6px;
