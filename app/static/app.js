@@ -60,8 +60,6 @@
     radioError: "",
     squelchSnrDb: 0,
     journalError: "",
-    listCards: new Map(),
-    archiveCards: new Map(),
     stripRows: new Map(),
     stripMode: "live",
     aircraftRenderFrame: 0,
@@ -160,9 +158,8 @@
   function cacheElements() {
     [
       "station-name", "connection", "connection-text", "clock", "clock-date", "clock-time",
-      "visible-count", "aircraft-search", "aircraft-list", "aircraft-strip-body", "strip-empty",
+      "visible-count", "aircraft-search", "aircraft-strip-body", "strip-empty",
       "strip-time-heading",
-      "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks",
       "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
@@ -798,57 +795,6 @@
 
   const LIST_LIMIT = 250;
 
-  function fillAircraftCard(aircraft, archived = false) {
-    const card = byId("aircraft-card-template").content.firstElementChild.cloneNode(true);
-    card.addEventListener("click", () => {
-      selectAircraft(selectionKey(aircraftFromCard(card), archived));
-    });
-    updateAircraftCard(card, aircraft, archived);
-    return card;
-  }
-
-  function aircraftFromCard(card) {
-    if (card.dataset.key && state.archived.has(card.dataset.key)) {
-      return state.archived.get(card.dataset.key);
-    }
-    return state.aircraft.get(card.dataset.icao) || { icao: card.dataset.icao };
-  }
-
-  function updateAircraftCard(card, aircraft, archived = false) {
-    card.dataset.icao = aircraft.icao;
-    if (archived) card.dataset.key = archiveKey(aircraft);
-    card.classList.toggle("is-selected", state.selectedIcao === selectionKey(aircraft, archived));
-    card.classList.toggle("is-archived", archived);
-    card.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
-    card.querySelector(".aircraft-card__flight strong").textContent = text(
-      aircraft.callsign, "без позывного",
-    );
-    card.querySelector(".aircraft-card__flight small").textContent =
-      text(aircraft.icao, "").toUpperCase();
-    const typeLabel = formatAircraftType(aircraft);
-    const typeNode = card.querySelector('[data-metric="type"]');
-    typeNode.textContent = typeLabel || "не определён";
-    typeNode.classList.toggle("is-unknown", !typeLabel);
-    const altitude = aircraftAltitude(aircraft);
-    card.querySelector('[data-metric="altitude"]').textContent =
-      altitude === null ? "не определена" : formatAltitude(altitude, aircraft.altitude_reference);
-    card.querySelector('[data-metric="speed"]').textContent = formatSpeed(aircraftSpeed(aircraft));
-    card.querySelector('[data-metric="position"]').textContent = formatPosition(aircraft);
-    const squawk = text(aircraft.squawk, "").trim();
-    card.querySelector('[data-metric="squawk"]').textContent = squawk || "—";
-    card.querySelector('[data-metric="started"]').textContent =
-      formatContactTime(contactStartedAt(aircraft));
-    const lostRow = card.querySelector('[data-metric-row="lost"]');
-    if (archived) {
-      lostRow.hidden = false;
-      card.querySelector('[data-metric="lost"]').textContent =
-        formatContactTime(aircraft.lost_at);
-    } else {
-      lostRow.hidden = true;
-    }
-    card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
-  }
-
   function stripCell(className, value) {
     const cell = document.createElement("td");
     if (className) cell.className = className;
@@ -944,67 +890,6 @@
     });
   }
 
-  function syncCardList(list, items, cards, keyOf, archived) {
-    if (list.querySelector(".empty-state") && !list.querySelector(".aircraft-card")) {
-      list.replaceChildren();
-    }
-    const seen = new Set();
-    items.forEach((aircraft, index) => {
-      const key = keyOf(aircraft);
-      seen.add(key);
-      let card = cards.get(key);
-      if (!card) {
-        card = fillAircraftCard(aircraft, archived);
-        cards.set(key, card);
-      } else {
-        updateAircraftCard(card, aircraft, archived);
-      }
-      const current = list.children[index];
-      if (current !== card) list.insertBefore(card, current || null);
-    });
-    [...cards.keys()].forEach((key) => {
-      if (seen.has(key)) return;
-      cards.get(key)?.remove();
-      cards.delete(key);
-    });
-  }
-
-  function replaceKeepingScroll(list, node) {
-    const top = list.scrollTop;
-    list.replaceChildren(node);
-    list.scrollTop = top;
-  }
-
-  function selectedAircraftRecord() {
-    if (!state.selectedIcao) return null;
-    if (state.aircraft.has(state.selectedIcao)) {
-      return { aircraft: state.aircraft.get(state.selectedIcao), archived: false };
-    }
-    if (state.archived.has(state.selectedIcao)) {
-      return { aircraft: state.archived.get(state.selectedIcao), archived: true };
-    }
-    return null;
-  }
-
-  function renderSelectedAircraft() {
-    const selected = selectedAircraftRecord();
-    if (!selected) {
-      state.listCards.clear();
-      replaceKeepingScroll(
-        el["aircraft-list"],
-        emptyNode("Выберите борт в таблице на карте."),
-      );
-      return;
-    }
-    syncCardList(
-      el["aircraft-list"],
-      [selected.aircraft],
-      state.listCards,
-      (item) => selectionKey(item, selected.archived),
-      selected.archived,
-    );
-  }
-
   function renderAircraftList() {
     const liveItems = [...state.aircraft.values()]
       .filter(matchesSearch)
@@ -1020,9 +905,7 @@
     const archived = state.stripMode === "archive";
     const items = archived ? archiveItems : liveItems;
     el["visible-count"].textContent = String(items.length);
-    el["archive-count"].textContent = String(state.archived.size);
     syncStripList(items.slice(0, LIST_LIMIT), archived);
-    renderSelectedAircraft();
   }
 
   async function loadTypeCatalog() {

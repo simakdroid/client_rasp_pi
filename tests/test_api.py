@@ -42,9 +42,6 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "Авиационный монитор" in page
         assert 'id="receiver-card"' not in page
         assert 'id="clock"' in page
-        assert "aircraft-card__flight" in page
-        assert "Начало контакта" in page
-        assert "Потеря контакта" in page
         assert 'id="panel-journal"' in page
         assert 'data-journal-mode="raw"' in page
         assert 'id="journal-list"' in page
@@ -55,17 +52,14 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "Список бортов" in page
         assert "Позывной" in page
         assert 'id="strip-time-heading"' in page
-        assert 'id="archive-section"' in page
-        assert 'id="aircraft-list"' in page
-        assert 'id="archive-list"' in page
+        assert 'data-tab="aircraft"' not in page
+        assert 'id="panel-aircraft"' not in page
         assert 'id="panel-types"' in page
         assert 'data-tab="types"' in page
         assert 'id="type-catalog-form"' in page
         assert client.get("/api/aircraft-types").json()["types"] == []
         assert 'id="custom-layers"' in page
         assert 'class="custom-layers pane-scroll"' in page
-        assert "aircraft-card__squawk" in page
-        assert "aircraft-card__type" in page
         assert "Время записей — UTC" in page
         assert client.get("/api/aircraft").json()["archived"] == []
         assert client.get("/api/sessions").status_code == 404

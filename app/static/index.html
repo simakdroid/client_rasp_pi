@@ -82,29 +82,14 @@
 
       <aside class="sidebar">
         <nav class="tabs" aria-label="Разделы панели">
-          <button class="tab is-active" type="button" data-tab="aircraft">Борта</button>
-          <button class="tab" type="button" data-tab="types">Типы</button>
+          <button class="tab is-active" type="button" data-tab="types">Типы</button>
           <button class="tab" type="button" data-tab="journal">Журнал</button>
           <button class="tab" type="button" data-tab="layers">Слои</button>
           <button class="tab" type="button" data-tab="radio">Радио</button>
           <button class="tab" type="button" data-tab="station">Станция</button>
         </nav>
 
-        <section class="tab-panel is-active" id="panel-aircraft">
-          <div class="panel-heading">
-            <h2>Карточка борта</h2>
-            <span id="archive-count">0</span>
-          </div>
-          <p class="journal-hint">Полный список — таблица в левом нижнем углу карты. Здесь подробности выбранного борта.</p>
-          <div id="aircraft-list" class="aircraft-list pane-scroll" aria-live="polite" tabindex="0">
-            <p class="empty-state">Выберите борт в таблице на карте.</p>
-          </div>
-          <section id="archive-section" class="archive-section" hidden>
-            <div id="archive-list" class="aircraft-list" hidden></div>
-          </section>
-        </section>
-
-        <section class="tab-panel" id="panel-types">
+        <section class="tab-panel is-active" id="panel-types">
           <div class="panel-heading">
             <h2>Типы ВС</h2>
             <span id="type-catalog-count">0</span>
@@ -227,46 +212,6 @@
       </aside>
     </main>
   </div>
-
-  <template id="aircraft-card-template">
-    <button class="aircraft-card" type="button">
-      <span class="aircraft-card__color"></span>
-      <span class="aircraft-card__body">
-        <span class="aircraft-card__flight"><strong></strong><small></small></span>
-        <span class="aircraft-card__metrics">
-          <span class="aircraft-card__metric">
-            <span class="aircraft-card__metric-label">Тип ВС</span>
-            <span class="aircraft-card__metric-value aircraft-card__type" data-metric="type"></span>
-          </span>
-          <span class="aircraft-card__metric">
-            <span class="aircraft-card__metric-label">Высота</span>
-            <span class="aircraft-card__metric-value" data-metric="altitude"></span>
-          </span>
-          <span class="aircraft-card__metric">
-            <span class="aircraft-card__metric-label">Скорость</span>
-            <span class="aircraft-card__metric-value" data-metric="speed"></span>
-          </span>
-          <span class="aircraft-card__metric">
-            <span class="aircraft-card__metric-label">Текущее положение</span>
-            <span class="aircraft-card__metric-value" data-metric="position"></span>
-          </span>
-          <span class="aircraft-card__metric">
-            <span class="aircraft-card__metric-label">Код ответчика</span>
-            <span class="aircraft-card__metric-value aircraft-card__squawk" data-metric="squawk"></span>
-          </span>
-          <span class="aircraft-card__metric">
-            <span class="aircraft-card__metric-label">Начало контакта</span>
-            <span class="aircraft-card__metric-value" data-metric="started"></span>
-          </span>
-          <span class="aircraft-card__metric" data-metric-row="lost" hidden>
-            <span class="aircraft-card__metric-label">Потеря контакта</span>
-            <span class="aircraft-card__metric-value" data-metric="lost"></span>
-          </span>
-        </span>
-        <span class="aircraft-card__zones"></span>
-      </span>
-    </button>
-  </template>
 
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script src="/vendor/Leaflet.VectorGrid.bundled.js"></script>
