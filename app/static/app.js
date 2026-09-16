@@ -823,9 +823,11 @@
   }
 
   const SURFACE_VEHICLE_CATEGORIES = new Set(["C0", "C1", "C2"]);
+  const SURFACE_VEHICLE_TYPE = "NULL";
 
   function isSurfaceVehicle(aircraft) {
-    return SURFACE_VEHICLE_CATEGORIES.has(text(aircraft.category, "").toUpperCase());
+    if (SURFACE_VEHICLE_CATEGORIES.has(text(aircraft.category, "").toUpperCase())) return true;
+    return aircraftTypeCode(aircraft) === SURFACE_VEHICLE_TYPE;
   }
 
   function shouldShowContact(aircraft) {
