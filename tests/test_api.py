@@ -48,6 +48,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="radio-hint"' in page
         assert 'id="journal-pager"' not in page
         assert 'id="strip-board"' in page
+        assert 'id="toggle-surface"' in page
         assert 'id="aircraft-strip-body"' in page
         assert "Список бортов" in page
         assert "Позывной" in page

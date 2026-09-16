@@ -32,6 +32,7 @@
     wsWatchdogTimer: null,
     lastWsMessageAt: 0,
     tracksVisible: true,
+    surfaceVisible: false,
     mapUserMoved: false,
     autoFitting: false,
     selectedIcao: null,
@@ -161,7 +162,7 @@
       "visible-count", "aircraft-search", "aircraft-strip-body", "strip-empty",
       "strip-time-heading",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
-      "ofm-option", "fit-aircraft", "toggle-tracks",
+      "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-surface",
       "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
       "radio-channel-form", "radio-channel-name", "radio-channel-freq",
       "radio-squelch", "radio-squelch-value",
@@ -204,6 +205,7 @@
     });
     el["fit-aircraft"].addEventListener("click", fitAircraft);
     el["toggle-tracks"].addEventListener("click", toggleTracks);
+    el["toggle-surface"].addEventListener("click", toggleSurfaceVehicles);
     el["reload-layers"].addEventListener("click", () => void loadLayers());
     el["clear-journal"].addEventListener("click", clearJournal);
     el["type-catalog-form"].addEventListener("submit", submitTypeCatalog);
@@ -554,6 +556,10 @@
 
   function updateMarker(aircraft, lat, lon) {
     const icao = aircraft.icao;
+    if (!shouldShowContact(aircraft)) {
+      removeMapObjects(icao);
+      return;
+    }
     const altitude = aircraftAltitude(aircraft);
     const color = altitudeColor(altitude);
     const rotation = finite(
@@ -702,6 +708,12 @@
   }
 
   function updateTrack(aircraft) {
+    if (!shouldShowContact(aircraft)) {
+      const hidden = state.tracks.get(aircraft.icao);
+      if (hidden) state.map.removeLayer(hidden);
+      state.tracks.delete(aircraft.icao);
+      return;
+    }
     const points = normalizeTrail(
       aircraft.track ?? aircraft.trail ?? aircraft.positions ?? aircraft.track_history,
     );
@@ -743,6 +755,23 @@
     });
     el["toggle-tracks"].classList.toggle("is-active", state.tracksVisible);
     el["toggle-tracks"].setAttribute("aria-pressed", String(state.tracksVisible));
+  }
+
+  function toggleSurfaceVehicles() {
+    state.surfaceVisible = !state.surfaceVisible;
+    el["toggle-surface"].classList.toggle("is-active", state.surfaceVisible);
+    el["toggle-surface"].setAttribute("aria-pressed", String(state.surfaceVisible));
+    if (!state.surfaceVisible && state.selectedIcao) {
+      const selected = state.aircraft.get(state.selectedIcao);
+      if (selected && isSurfaceVehicle(selected)) state.selectedIcao = null;
+    }
+    state.aircraft.forEach((aircraft) => {
+      const lat = latNum(aircraft.lat ?? aircraft.latitude);
+      const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+      if (lat !== null && lon !== null) updateMarker(aircraft, lat, lon);
+      updateTrack(aircraft);
+    });
+    renderAircraftList();
   }
 
   function fitAircraft() {
@@ -791,6 +820,16 @@
       aircraftTypeCode(aircraft), text(aircraft.type_desc, ""),
     ].join(" ").toUpperCase();
     return !state.search || haystack.includes(state.search);
+  }
+
+  const SURFACE_VEHICLE_CATEGORIES = new Set(["C0", "C1", "C2"]);
+
+  function isSurfaceVehicle(aircraft) {
+    return SURFACE_VEHICLE_CATEGORIES.has(text(aircraft.category, "").toUpperCase());
+  }
+
+  function shouldShowContact(aircraft) {
+    return state.surfaceVisible || !isSurfaceVehicle(aircraft);
   }
 
   const LIST_LIMIT = 250;
@@ -892,6 +931,7 @@
 
   function renderAircraftList() {
     const liveItems = [...state.aircraft.values()]
+      .filter(shouldShowContact)
       .filter(matchesSearch)
       .sort((a, b) => {
         const da = aircraftDistance(a);
@@ -900,6 +940,7 @@
           text(a.callsign, a.icao).localeCompare(text(b.callsign, b.icao));
       });
     const archiveItems = [...state.archived.values()]
+      .filter(shouldShowContact)
       .filter(matchesSearch)
       .sort((a, b) => text(b.lost_at, "").localeCompare(text(a.lost_at, "")));
     const archived = state.stripMode === "archive";
