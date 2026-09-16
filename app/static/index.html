@@ -38,6 +38,41 @@
           <button id="toggle-tracks" class="icon-button is-active" type="button" title="Показать или скрыть треки"
                   aria-pressed="true" aria-label="Показать или скрыть треки">⌁</button>
         </div>
+        <div class="strip-board" id="strip-board" aria-label="Список бортов">
+          <div class="strip-board__bar">
+            <div class="strip-board__title">
+              <strong>Список бортов</strong>
+              <span id="visible-count">0</span>
+            </div>
+            <div class="strip-board__modes" role="group" aria-label="Состав списка">
+              <button class="is-active" type="button" data-strip-mode="live">Эфир</button>
+              <button type="button" data-strip-mode="archive">Архив</button>
+            </div>
+            <label class="strip-board__search">
+              <span class="sr-only">Поиск борта</span>
+              <input id="aircraft-search" type="search" placeholder="ICAO, позывной, код…" autocomplete="off">
+            </label>
+          </div>
+          <div class="strip-board__scroll">
+            <table class="strip-table">
+              <thead>
+                <tr>
+                  <th id="strip-time-heading">Начало</th>
+                  <th>Позывной</th>
+                  <th>ICAO</th>
+                  <th>Тип</th>
+                  <th>Код</th>
+                  <th>Высота</th>
+                  <th>Скорость</th>
+                  <th>Положение</th>
+                  <th>Сектор</th>
+                </tr>
+              </thead>
+              <tbody id="aircraft-strip-body"></tbody>
+            </table>
+            <p class="empty-state" id="strip-empty">Ожидание данных о бортах…</p>
+          </div>
+        </div>
         <div class="altitude-legend" aria-label="Легенда высоты">
           <span>Высота</span>
           <div class="altitude-legend__scale"></div>
@@ -57,22 +92,15 @@
 
         <section class="tab-panel is-active" id="panel-aircraft">
           <div class="panel-heading">
-            <h2>Борта поблизости</h2>
-            <span id="visible-count">0</span>
+            <h2>Карточка борта</h2>
+            <span id="archive-count">0</span>
           </div>
-          <label class="search">
-            <span class="sr-only">Поиск борта</span>
-            <input id="aircraft-search" type="search" placeholder="ICAO или позывной…" autocomplete="off">
-          </label>
+          <p class="journal-hint">Полный список — таблица в левом нижнем углу карты. Здесь подробности выбранного борта.</p>
           <div id="aircraft-list" class="aircraft-list pane-scroll" aria-live="polite" tabindex="0">
-            <p class="empty-state">Ожидание данных о бортах…</p>
+            <p class="empty-state">Выберите борт в таблице на карте.</p>
           </div>
           <section id="archive-section" class="archive-section" hidden>
-            <div class="panel-heading">
-              <h2>Архив</h2>
-              <span id="archive-count">0</span>
-            </div>
-            <div id="archive-list" class="aircraft-list pane-scroll" tabindex="0"></div>
+            <div id="archive-list" class="aircraft-list" hidden></div>
           </section>
         </section>
 

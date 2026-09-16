@@ -62,6 +62,8 @@
     journalError: "",
     listCards: new Map(),
     archiveCards: new Map(),
+    stripRows: new Map(),
+    stripMode: "live",
     aircraftRenderFrame: 0,
     layerCatalogVersion: -1,
     syncGeneration: null,
@@ -158,7 +160,8 @@
   function cacheElements() {
     [
       "station-name", "connection", "connection-text", "clock", "clock-date", "clock-time",
-      "visible-count", "aircraft-search", "aircraft-list",
+      "visible-count", "aircraft-search", "aircraft-list", "aircraft-strip-body", "strip-empty",
+      "strip-time-heading",
       "archive-section", "archive-count", "archive-list",
       "custom-layers", "radio-list", "radio-audio", "now-playing",
       "ofm-option", "fit-aircraft", "toggle-tracks",
@@ -185,6 +188,22 @@
     el["aircraft-search"].addEventListener("input", (event) => {
       state.search = event.target.value.trim().toUpperCase();
       renderAircraftList();
+    });
+    document.querySelectorAll("[data-strip-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.stripMode = button.dataset.stripMode === "archive" ? "archive" : "live";
+        document.querySelectorAll("[data-strip-mode]").forEach((item) => {
+          item.classList.toggle("is-active", item === button);
+        });
+        if (el["strip-time-heading"]) {
+          el["strip-time-heading"].textContent = state.stripMode === "archive"
+            ? "Потеря"
+            : "Начало";
+        }
+        state.stripRows.clear();
+        el["aircraft-strip-body"].replaceChildren();
+        renderAircraftList();
+      });
     });
     el["fit-aircraft"].addEventListener("click", fitAircraft);
     el["toggle-tracks"].addEventListener("click", toggleTracks);
@@ -281,6 +300,11 @@
     state.map.getContainer().addEventListener("focusin", () => {
       window.scrollTo(0, 0);
     });
+    const stripBoard = byId("strip-board");
+    if (stripBoard) {
+      L.DomEvent.disableClickPropagation(stripBoard);
+      L.DomEvent.disableScrollPropagation(stripBoard);
+    }
     if (state.station) {
       L.circleMarker([state.station.lat, state.station.lon], {
         radius: 6,
@@ -751,7 +775,7 @@
     state.selectedIcao = icao;
     if (previous && previous !== icao) refreshAircraftMarker(previous);
     refreshAircraftMarker(icao);
-    const marker = state.markers.get(icao);
+    const marker = state.markers.get(icao) || state.archiveMarkers.get(icao);
     if (marker) state.map.panTo(marker.getLatLng());
     renderAircraftList();
   }
@@ -772,7 +796,7 @@
     return !state.search || haystack.includes(state.search);
   }
 
-  const LIST_LIMIT = 80;
+  const LIST_LIMIT = 250;
 
   function fillAircraftCard(aircraft, archived = false) {
     const card = byId("aircraft-card-template").content.firstElementChild.cloneNode(true);
@@ -825,6 +849,101 @@
     card.querySelector(".aircraft-card__zones").textContent = text(aircraft.sector, "");
   }
 
+  function stripCell(className, value) {
+    const cell = document.createElement("td");
+    if (className) cell.className = className;
+    cell.textContent = value;
+    return cell;
+  }
+
+  function fillStripRow(aircraft, archived = false) {
+    const row = document.createElement("tr");
+    row.addEventListener("click", () => {
+      selectAircraft(selectionKey(aircraftFromStrip(row), archived));
+    });
+    updateStripRow(row, aircraft, archived);
+    return row;
+  }
+
+  function aircraftFromStrip(row) {
+    if (row.dataset.key && state.archived.has(row.dataset.key)) {
+      return state.archived.get(row.dataset.key);
+    }
+    return state.aircraft.get(row.dataset.icao) || { icao: row.dataset.icao };
+  }
+
+  function formatStripAltitude(aircraft) {
+    if (aircraft.on_ground) return "земля";
+    const altitude = aircraftAltitude(aircraft);
+    if (altitude === null) return "—";
+    const feet = `${Math.round(altitude).toLocaleString("ru-RU")} ft`;
+    const source = altitudeReferenceLabel(aircraft.altitude_reference);
+    return source ? `${feet} ${source}` : feet;
+  }
+
+  function updateStripRow(row, aircraft, archived = false) {
+    const key = archived ? archiveKey(aircraft) : aircraft.icao;
+    row.dataset.icao = aircraft.icao;
+    if (archived) row.dataset.key = key;
+    row.classList.toggle("is-selected", state.selectedIcao === selectionKey(aircraft, archived));
+    row.classList.toggle("is-archived", archived);
+    row.style.setProperty("--aircraft-color", altitudeColor(aircraftAltitude(aircraft)));
+    const cells = [
+      ["", formatUtcTime(archived ? aircraft.lost_at : contactStartedAt(aircraft))],
+      ["strip-lit", text(aircraft.callsign, "без позывного")],
+      ["strip-icao", text(aircraft.icao, "").toUpperCase()],
+      ["", formatAircraftType(aircraft, true) || "—"],
+      ["strip-code", text(aircraft.squawk, "").trim() || "—"],
+      ["", formatStripAltitude(aircraft)],
+      ["", formatSpeed(aircraftSpeed(aircraft))],
+      ["", formatPosition(aircraft)],
+      ["", text(aircraft.sector, "").trim() || "—"],
+    ];
+    if (row.children.length !== cells.length) {
+      row.replaceChildren(...cells.map(([className, value]) => stripCell(className, value)));
+      return;
+    }
+    cells.forEach(([className, value], index) => {
+      const cell = row.children[index];
+      cell.className = className;
+      cell.textContent = value;
+    });
+  }
+
+  function syncStripList(items, archived) {
+    const body = el["aircraft-strip-body"];
+    const empty = el["strip-empty"];
+    if (!items.length) {
+      state.stripRows.clear();
+      body.replaceChildren();
+      empty.hidden = false;
+      empty.textContent = state.search
+        ? "Ничего не найдено"
+        : (archived ? "Архив пуст" : "Нет активных бортов");
+      return;
+    }
+    empty.hidden = true;
+    const seen = new Set();
+    items.forEach((aircraft, index) => {
+      const key = archived ? archiveKey(aircraft) : aircraft.icao;
+      seen.add(key);
+      let row = state.stripRows.get(key);
+      if (!row) {
+        row = fillStripRow(aircraft, archived);
+        state.stripRows.set(key, row);
+      } else {
+        updateStripRow(row, aircraft, archived);
+      }
+      const current = body.children[index];
+      if (current !== row) body.insertBefore(row, current || null);
+    });
+    [...state.stripRows.keys()].forEach((key) => {
+      if (seen.has(key)) return;
+      state.stripRows.get(key)?.remove();
+      state.stripRows.delete(key);
+    });
+  }
+
   function syncCardList(list, items, cards, keyOf, archived) {
     if (list.querySelector(".empty-state") && !list.querySelector(".aircraft-card")) {
       list.replaceChildren();
@@ -856,8 +975,38 @@
     list.scrollTop = top;
   }
 
+  function selectedAircraftRecord() {
+    if (!state.selectedIcao) return null;
+    if (state.aircraft.has(state.selectedIcao)) {
+      return { aircraft: state.aircraft.get(state.selectedIcao), archived: false };
+    }
+    if (state.archived.has(state.selectedIcao)) {
+      return { aircraft: state.archived.get(state.selectedIcao), archived: true };
+    }
+    return null;
+  }
+
+  function renderSelectedAircraft() {
+    const selected = selectedAircraftRecord();
+    if (!selected) {
+      state.listCards.clear();
+      replaceKeepingScroll(
+        el["aircraft-list"],
+        emptyNode("Выберите борт в таблице на карте."),
+      );
+      return;
+    }
+    syncCardList(
+      el["aircraft-list"],
+      [selected.aircraft],
+      state.listCards,
+      (item) => selectionKey(item, selected.archived),
+      selected.archived,
+    );
+  }
+
   function renderAircraftList() {
-    const items = [...state.aircraft.values()]
+    const liveItems = [...state.aircraft.values()]
       .filter(matchesSearch)
       .sort((a, b) => {
         const da = aircraftDistance(a);
@@ -865,26 +1014,15 @@
         return (da ?? Infinity) - (db ?? Infinity) ||
           text(a.callsign, a.icao).localeCompare(text(b.callsign, b.icao));
       });
+    const archiveItems = [...state.archived.values()]
+      .filter(matchesSearch)
+      .sort((a, b) => text(b.lost_at, "").localeCompare(text(a.lost_at, "")));
+    const archived = state.stripMode === "archive";
+    const items = archived ? archiveItems : liveItems;
     el["visible-count"].textContent = String(items.length);
-    const shown = items.slice(0, LIST_LIMIT);
-    if (!shown.length) {
-      state.listCards.clear();
-      replaceKeepingScroll(
-        el["aircraft-list"],
-        emptyNode(state.search ? "Ничего не найдено" : "Нет активных бортов"),
-      );
-    } else {
-      syncCardList(el["aircraft-list"], shown, state.listCards, (item) => item.icao, false);
-      const extra = el["aircraft-list"].querySelector(".list-overflow");
-      extra?.remove();
-      if (items.length > shown.length) {
-        const note = document.createElement("p");
-        note.className = "empty-state list-overflow";
-        note.textContent = `Показаны ближайшие ${shown.length} из ${items.length}`;
-        el["aircraft-list"].append(note);
-      }
-    }
-    renderArchiveList();
+    el["archive-count"].textContent = String(state.archived.size);
+    syncStripList(items.slice(0, LIST_LIMIT), archived);
+    renderSelectedAircraft();
   }
 
   async function loadTypeCatalog() {
@@ -978,7 +1116,6 @@
       setTypeCatalogStatus("");
       renderTypeCatalog();
       renderAircraftList();
-      renderArchiveList();
       refreshAircraftMarkers();
     } catch (error) {
       setTypeCatalogStatus(`Не удалось сохранить тип ВС: ${error.message}`);
@@ -996,29 +1133,10 @@
       setTypeCatalogStatus("");
       renderTypeCatalog();
       renderAircraftList();
-      renderArchiveList();
       refreshAircraftMarkers();
     } catch (error) {
       setTypeCatalogStatus(`Не удалось удалить тип ВС: ${error.message}`);
     }
-  }
-
-  function renderArchiveList() {
-    const items = [...state.archived.values()]
-      .filter(matchesSearch)
-      .sort((a, b) => text(b.lost_at, "").localeCompare(text(a.lost_at, "")));
-    el["archive-section"].hidden = items.length === 0 && !state.search;
-    el["archive-count"].textContent = String(items.length);
-    if (!items.length) {
-      state.archiveCards.clear();
-      replaceKeepingScroll(
-        el["archive-list"],
-        emptyNode(state.search && state.archived.size ? "Ничего не найдено в архиве" : "Архив пуст"),
-      );
-      if (!state.archived.size) el["archive-section"].hidden = true;
-      return;
-    }
-    syncCardList(el["archive-list"], items.slice(0, LIST_LIMIT), state.archiveCards, archiveKey, true);
   }
 
   function aircraftAltitude(aircraft) {

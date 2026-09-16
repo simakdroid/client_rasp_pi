@@ -206,7 +206,8 @@ h1, h2, h3, p { margin: 0; }
 .altitude-legend {
   position: absolute;
   z-index: 500;
-  left: 12px;
+  right: 12px;
+  left: auto;
   bottom: 24px;
   width: 228px;
   padding: 9px 11px;
@@ -219,6 +220,127 @@ h1, h2, h3, p { margin: 0; }
 .altitude-legend > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
 .altitude-legend__scale { height: 5px; border-radius: 4px; background: linear-gradient(90deg, #40d98b, #60cfff 35%, #a584ff 65%, #ff6f91); }
 .altitude-legend__labels { display: flex; justify-content: space-between; margin-top: 4px; color: var(--muted); font-size: 9px; }
+
+.strip-board {
+  position: absolute;
+  z-index: 550;
+  left: 10px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  width: min(880px, calc(100% - 24px));
+  max-height: min(44vh, 420px);
+  overflow: hidden;
+  border: 1px solid #3d6a88;
+  border-radius: 4px;
+  background: rgba(8, 22, 38, .92);
+  box-shadow: 0 8px 28px #0008;
+  pointer-events: auto;
+}
+.strip-board__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #2b5570;
+  background: rgba(12, 36, 58, .95);
+}
+.strip-board__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d6ecf8;
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.strip-board__title strong { font-weight: 700; }
+.strip-board__title span {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #16344d;
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+.strip-board__modes {
+  display: flex;
+  gap: 0;
+  border: 1px solid #2b5570;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.strip-board__modes button {
+  padding: 3px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.strip-board__modes button.is-active {
+  background: #1d6a9a;
+  color: #fff;
+}
+.strip-board__search { margin-left: auto; }
+.strip-board__search input {
+  width: min(220px, 36vw);
+  padding: 4px 8px;
+  border: 1px solid #2b5570;
+  border-radius: 4px;
+  outline: none;
+  background: #071521;
+  color: var(--text);
+  font-size: 12px;
+}
+.strip-board__search input:focus { border-color: var(--accent); }
+.strip-board__scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.strip-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.strip-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 7px;
+  border-bottom: 1px solid #3d6a88;
+  background: #12344d;
+  color: #8ec8e8;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-align: left;
+  white-space: nowrap;
+}
+.strip-table tbody tr {
+  cursor: pointer;
+  border-left: 3px solid var(--aircraft-color, #36b7ff);
+}
+.strip-table tbody tr:nth-child(even) { background: rgba(18, 48, 70, .45); }
+.strip-table tbody tr:hover { background: #1a4a6c; }
+.strip-table tbody tr.is-selected { background: #1a4a6c; }
+.strip-table tbody tr.is-archived { opacity: .78; }
+.strip-table td {
+  padding: 3px 7px;
+  color: #e7f4fb;
+  white-space: nowrap;
+}
+.strip-table .strip-lit { font-weight: 700; color: #fff; }
+.strip-table .strip-icao { color: #9ee0ff; }
+.strip-table .strip-code { color: #ffe08a; }
+.strip-board .empty-state { margin: 14px 10px; font-size: 12px; }
 
 .sidebar {
   position: relative;
@@ -436,7 +558,7 @@ h1, h2, h3, p { margin: 0; }
 #aircraft-list {
   flex: 1 1 0;
   height: 0;
-  min-height: 12rem;
+  min-height: 8rem;
 }
 .aircraft-card {
   position: relative;
@@ -808,7 +930,16 @@ h1, h2, h3, p { margin: 0; }
   .tab-panel { padding: 10px; }
   .archive-section { min-height: 10rem; }
   .type-catalog__form { grid-template-columns: 1fr 1fr auto; }
-  .altitude-legend { width: 190px; bottom: 12px; }
+  .altitude-legend { width: 160px; bottom: auto; top: 12px; right: 12px; }
+  .strip-board {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 34vh;
+  }
+  .strip-board__search { margin-left: 0; width: 100%; }
+  .strip-board__search input { width: 100%; }
 }
 
 @media (min-width: 1600px) {
