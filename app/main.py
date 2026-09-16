@@ -49,7 +49,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.coverage_max_km,
         type_catalog,
         max_active_aircraft=settings.max_active_aircraft,
-        station_alt_m=settings.station_alt_m,
     )
     hub = BroadcastHub(
         queue_size=settings.websocket_queue_size,
@@ -298,7 +297,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "name": settings.station_name,
                 "lat": settings.station_lat,
                 "lon": settings.station_lon,
-                "alt_m": settings.station_alt_m,
             },
             "map": {
                 "osm": {"url": settings.osm_url, "max_zoom": 19},
@@ -312,8 +310,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "admin_required": bool(settings.admin_token),
             "track_max_points": settings.track_max_points,
-            "estimate_max_s": settings.estimate_max_s,
-            "coverage_max_km": settings.coverage_max_km,
             "websocket_interval_ms": round(settings.websocket_interval_s * 1000),
             "websocket_heartbeat_ms": round(settings.websocket_heartbeat_s * 1000),
         }

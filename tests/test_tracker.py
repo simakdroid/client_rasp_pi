@@ -969,35 +969,3 @@ async def test_fresh_velocity_keeps_reported_track(tmp_path) -> None:
     assert live["heading_deg"] == 18
 
 
-@pytest.mark.asyncio
-async def test_tracker_exports_possible_range_without_inventing_position(tmp_path) -> None:
-    layers = LayerManager(tmp_path)
-    layers.refresh()
-    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1, station_alt_m=30)
-    now = datetime.now(UTC)
-    await tracker.apply(
-        [AircraftUpdate(icao="abc123", altitude_ft=35000, received_at=now)]
-    )
-    snapshot = await tracker.snapshot()
-    assert snapshot[0]["lat"] is None
-    assert snapshot[0]["lon"] is None
-    assert snapshot[0]["position_source"] is None
-    assert snapshot[0]["possible_range_km"] == 448.1
-
-    await tracker.apply(
-        [
-            AircraftUpdate(
-                icao="def456",
-                lat=55.1,
-                lon=37.1,
-                altitude_ft=10000,
-                received_at=now,
-                position_at=now,
-            )
-        ]
-    )
-    located = next(item for item in await tracker.snapshot() if item["icao"] == "def456")
-    assert located["position_source"] == "adsb"
-    assert located["possible_range_km"] == 250.0
-
-

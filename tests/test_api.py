@@ -102,9 +102,10 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="coverage-stats"' not in page
         assert client.get("/app.js").status_code == 200
         config = client.get("/api/config").json()
-        assert config["station"]["alt_m"] == 30
-        assert config["estimate_max_s"] == 90
-        assert config["coverage_max_km"] == 450
+        assert config["station"]["lat"]
+        assert config["station"]["lon"]
+        assert "alt_m" not in config["station"]
+        assert "estimate_max_s" not in config
         assert coverage["saved"] is True
         assert coverage.get("save_error") is None
         assert 'id="type-catalog-hint"' in page

@@ -12,7 +12,6 @@ from pyproj import Geod
 
 from .aircraft_types import AircraftTypeCatalog, is_airframe_type_code
 from .coverage import CoverageRose
-from .estimate import radio_horizon_km
 from .gis import LayerManager
 from .mode_s import summary_text
 from .models import AircraftState, AircraftUpdate, Position
@@ -40,12 +39,9 @@ class AircraftTracker:
         max_coverage_km: float = 450,
         type_catalog: AircraftTypeCatalog | None = None,
         max_active_aircraft: int = 500,
-        station_alt_m: float = 30.0,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
-        self.station_alt_m = station_alt_m
-        self.max_coverage_km = max_coverage_km
         self.layer_manager = layer_manager
         self.ttl = timedelta(seconds=ttl_s)
         self.max_track_points = max_track_points
@@ -376,13 +372,6 @@ class AircraftTracker:
             payload["type_code"] = None
         if self._type_catalog:
             self._type_catalog.apply(payload)
-        payload["possible_range_km"] = radio_horizon_km(
-            state.altitude_ft,
-            self.station_alt_m,
-            self.max_coverage_km,
-            on_ground=state.on_ground,
-        )
-        payload["position_source"] = "adsb" if state.lat is not None and state.lon is not None else None
         payload["heading_deg"] = _display_heading_deg(state)
         payload["velocity_at"] = state.velocity_at.isoformat() if state.velocity_at else None
         return payload
