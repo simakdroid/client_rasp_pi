@@ -238,6 +238,17 @@ Unit перед каждым запуском вызывает `render-rtl-airba
 Icecast может слушать только localhost. Если страница по HTTPS, аудио тоже
 идёт по HTTPS через приложение.
 
+Проверка Icecast 2.5: `curl -sI` шлёт HEAD и получит `405 Method Not Allowed`
+(`Allow: GET, OPTIONS`). Нужен GET:
+
+```bash
+curl -sS --max-time 2 -D - -o /dev/null http://127.0.0.1:8000/vhf-scan.mp3
+systemctl is-active icecast2 rtl-airband
+```
+
+Ожидается `HTTP/1.0 200` или `HTTP/1.1 200`. `404` — rtl-airband не залогинен
+как источник (часто `activating`). `405` на GET не должен появляться.
+
 ## 7. Backend
 
 `deploy/install.sh` копирует приложение в `/opt/adsb-vhf`, создаёт `.venv`,
@@ -345,7 +356,8 @@ journalctl -b -u readsb-adsb -u rtl-airband -u adsb-vhf-backend --no-pager
 Типовые причины ошибок:
 
 - serial не записан либо оба донгла имеют одинаковый serial;
-- USB iSerial не совпадает с `SN:` у `rtl_test -t`;
+- USB iSerial не совпадает с `SN:` у `rtl_test -t` (`rtl_airband`:
+  `RTLSDR device with serial number 0118 not found`, сервис в `activating`);
 - DVB-модуль ядра всё ещё захватил USB-устройство;
 - пользователь сервиса не состоит в `rtl-sdr`;
 - Icecast не принимает source credentials;

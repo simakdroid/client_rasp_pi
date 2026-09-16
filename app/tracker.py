@@ -12,6 +12,7 @@ from pyproj import Geod
 
 from .aircraft_types import AircraftTypeCatalog, is_airframe_type_code
 from .coverage import CoverageRose
+from .estimate import radio_horizon_km
 from .gis import LayerManager
 from .mode_s import summary_text
 from .models import AircraftState, AircraftUpdate, Position
@@ -21,6 +22,7 @@ LOGGER = logging.getLogger(__name__)
 GEOD = Geod(ellps="WGS84")
 GEOFENCE_LEAVE_MISSES = 2
 HAMMING1_ALIAS_M = 25_000
+HEADING_MIN_DISTANCE_M = 8.0
 
 
 class AircraftTracker:
@@ -38,9 +40,12 @@ class AircraftTracker:
         max_coverage_km: float = 450,
         type_catalog: AircraftTypeCatalog | None = None,
         max_active_aircraft: int = 500,
+        station_alt_m: float = 30.0,
     ) -> None:
         self.station_lat = station_lat
         self.station_lon = station_lon
+        self.station_alt_m = station_alt_m
+        self.max_coverage_km = max_coverage_km
         self.layer_manager = layer_manager
         self.ttl = timedelta(seconds=ttl_s)
         self.max_track_points = max_track_points
@@ -371,6 +376,15 @@ class AircraftTracker:
             payload["type_code"] = None
         if self._type_catalog:
             self._type_catalog.apply(payload)
+        payload["possible_range_km"] = radio_horizon_km(
+            state.altitude_ft,
+            self.station_alt_m,
+            self.max_coverage_km,
+            on_ground=state.on_ground,
+        )
+        payload["position_source"] = "adsb" if state.lat is not None and state.lon is not None else None
+        payload["heading_deg"] = _display_heading_deg(state)
+        payload["velocity_at"] = state.velocity_at.isoformat() if state.velocity_at else None
         return payload
 
     def _enforce_delta_budget(self) -> None:
@@ -634,8 +648,10 @@ class AircraftTracker:
             if value is not None and value != getattr(state, name):
                 setattr(state, name, value)
                 changed = True
+        if not changed:
+            return False
         setattr(state, time_attr, incoming_at)
-        return changed
+        return True
 
     def _append_event(
         self,
@@ -654,11 +670,7 @@ class AircraftTracker:
             "altitude_ft": state.altitude_ft,
             "altitude_reference": state.altitude_reference,
             "speed_kt": state.speed_kt,
-            "track_deg": (
-                state.track_deg
-                if state.track_deg is not None
-                else state.calculated_track_deg
-            ),
+            "track_deg": _display_heading_deg(state),
             "true_heading_deg": state.true_heading_deg,
             "vertical_rate_fpm": state.vertical_rate_fpm,
             "vertical_rate_source": state.vertical_rate_source,
@@ -807,10 +819,16 @@ class AircraftTracker:
         forward_azimuth, _, segment_m = GEOD.inv(
             previous.lon, previous.lat, point.lon, point.lat
         )
+        heading = round(forward_azimuth % 360, 1)
+        if heading == 360.0:
+            heading = 0.0
+        if segment_m >= HEADING_MIN_DISTANCE_M and state.calculated_track_deg != heading:
+            state.calculated_track_deg = heading
+            changed = True
         if segment_m < self.min_track_distance_m:
             return changed
 
-        state.calculated_track_deg = round(forward_azimuth % 360, 1)
+        state.calculated_track_deg = heading
         elapsed_minutes = (point.timestamp - previous.timestamp).total_seconds() / 60
         if (
             update.vertical_rate_fpm is None
@@ -858,6 +876,27 @@ def _hamming1_corroborated(state: AircraftState, update: AircraftUpdate) -> bool
         _, _, metres = GEOD.inv(state.lon, state.lat, update.lon, update.lat)
         return metres <= HAMMING1_ALIAS_M
     return update.lat is None or update.lon is None or state.lat is None or state.lon is None
+
+
+def _display_heading_deg(state: AircraftState) -> float | None:
+    calculated = state.calculated_track_deg
+    reported = state.track_deg
+    position_newer = (
+        calculated is not None
+        and (
+            reported is None
+            or state.velocity_at is None
+            or (
+                state.position_at is not None
+                and state.position_at > state.velocity_at
+            )
+        )
+    )
+    if position_newer:
+        return calculated
+    if reported is not None:
+        return reported
+    return state.true_heading_deg
 
 
 def _is_newer(current: datetime | None, incoming: datetime) -> bool:

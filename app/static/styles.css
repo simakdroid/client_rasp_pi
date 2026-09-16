@@ -745,6 +745,12 @@ h1, h2, h3, p { margin: 0; }
 
 .aircraft-marker { background: transparent; border: 0; }
 .aircraft-marker.is-archived { opacity: .42; filter: grayscale(.35); }
+.aircraft-marker.is-estimated { opacity: .78; }
+.aircraft-marker.is-estimated .aircraft-marker__plane {
+  outline: 1px dashed currentColor;
+  outline-offset: 1px;
+  border-radius: 50%;
+}
 .aircraft-marker__plane {
   width: 30px;
   height: 30px;
@@ -773,6 +779,9 @@ h1, h2, h3, p { margin: 0; }
 .leaflet-tooltip.aircraft-label.is-archived {
   opacity: .7;
   filter: grayscale(.2);
+}
+.leaflet-tooltip.aircraft-label.is-estimated {
+  border-style: dashed;
 }
 .aircraft-label__id { color: #fff; font-weight: 700; letter-spacing: .02em; }
 .aircraft-label__type { color: var(--accent); }

@@ -101,6 +101,10 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="toggle-coverage"' not in page
         assert 'id="coverage-stats"' not in page
         assert client.get("/app.js").status_code == 200
+        config = client.get("/api/config").json()
+        assert config["station"]["alt_m"] == 30
+        assert config["estimate_max_s"] == 90
+        assert config["coverage_max_km"] == 450
         assert coverage["saved"] is True
         assert coverage.get("save_error") is None
         assert 'id="type-catalog-hint"' in page
@@ -113,6 +117,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "latNum" in script
         assert "next_after_id" in script
         assert "/api/radio/stream" in script
+        assert "/api/radio/stream-status" in script
         diagnostics = client.get("/api/station/diagnostics").json()
         blob = str(diagnostics)
         assert "admin_token" not in blob
@@ -203,6 +208,11 @@ def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
         assert local[0]["stream_url"] == "http://127.0.0.1:8080/api/radio/stream"
         missing = client.get("/api/radio/stream")
         assert missing.status_code == 503
+        status = client.get("/api/radio/stream-status")
+        assert status.status_code == 503
+        assert "Icecast" in status.json()["detail"]
+        head = client.head("/api/radio/stream")
+        assert head.status_code == 503
 
 
 def test_gzip_and_unknown_mbtiles_formats(tmp_path) -> None:

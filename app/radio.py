@@ -12,6 +12,8 @@ from urllib.request import Request, urlopen
 from .config import SCAN_MOUNTPOINT, RadioChannel
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_VHF_MOUNT_RE = re.compile(r"^(vhf-scan|vhf-\d{6})\.mp3$")
+_STATUS_JSON_PATHS = ("/admin/publicstats.json", "/status-json.xsl")
 
 
 class RadioMonitor:
@@ -181,29 +183,193 @@ async def open_icecast_audio(
     port: int = 8000,
     mount: str = SCAN_MOUNTPOINT,
     timeout_s: float = 4.0,
+    allow_fallback: bool = True,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes, str]:
     """Connect to a local Icecast mount and return the raw MP3 body start."""
+    target = _normalize_mount(mount)
+    try:
+        return await _open_icecast_mount(host, port, target, timeout_s)
+    except IcecastStreamError as exc:
+        if not allow_fallback or exc.status_code != 502:
+            raise
+        alternative = await _discover_icecast_mount(
+            host, port, timeout_s, exclude={target}
+        )
+        if not alternative:
+            raise
+        return await _open_icecast_mount(host, port, alternative, timeout_s)
+
+
+async def probe_icecast_audio(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    timeout_s: float = 4.0,
+) -> str:
+    """Open Icecast just long enough to confirm a listener stream exists."""
+    _reader, writer, _leftover, content_type = await open_icecast_audio(
+        host=host,
+        port=port,
+        timeout_s=timeout_s,
+    )
+    await _close_writer(writer)
+    return content_type or "audio/mpeg"
+
+
+def _normalize_mount(mount: str | None) -> str:
     target = (mount or SCAN_MOUNTPOINT).strip().lstrip("/")
-    if target != SCAN_MOUNTPOINT:
+    if not _VHF_MOUNT_RE.fullmatch(target):
         raise IcecastStreamError("неизвестный Icecast mount", status_code=404)
+    return target
+
+
+async def _open_icecast_mount(
+    host: str,
+    port: int,
+    target: str,
+    timeout_s: float,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes, str]:
+    status, headers, leftover, reader, writer = await _icecast_http_get(
+        host,
+        port,
+        f"/{target}",
+        timeout_s,
+        accept="*/*",
+        icy_metadata=False,
+    )
+    if status != 200:
+        await _close_writer(writer)
+        raise IcecastStreamError(_mount_http_error(target, status), status_code=502)
+    content_type = headers.get("content-type") or "audio/mpeg"
+    return reader, writer, leftover, content_type
+
+
+async def _discover_icecast_mount(
+    host: str,
+    port: int,
+    timeout_s: float,
+    *,
+    exclude: set[str],
+) -> str | None:
+    for path in _STATUS_JSON_PATHS:
+        payload = await _load_icecast_status(host, port, path, timeout_s)
+        if payload is None:
+            continue
+        for candidate in _mounts_from_status(payload):
+            if candidate not in exclude:
+                return candidate
+    return None
+
+
+async def _load_icecast_status(
+    host: str,
+    port: int,
+    path: str,
+    timeout_s: float,
+) -> object | None:
+    try:
+        status, _headers, leftover, reader, writer = await _icecast_http_get(
+            host,
+            port,
+            path,
+            timeout_s,
+            accept="application/json",
+        )
+        try:
+            if status != 200:
+                return None
+            body = leftover + await asyncio.wait_for(reader.read(65536), timeout=timeout_s)
+        finally:
+            await _close_writer(writer)
+        return json.loads(body.decode("utf-8", errors="replace"))
+    except (TimeoutError, IcecastStreamError, OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _mounts_from_status(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    stats = payload.get("icestats")
+    if not isinstance(stats, dict):
+        stats = payload
+    raw_sources: list[object] = []
+    for key in ("source", "sources"):
+        value = stats.get(key)
+        if isinstance(value, dict):
+            raw_sources.append(value)
+        elif isinstance(value, list):
+            raw_sources.extend(value)
+    mounts: list[str] = []
+    for item in raw_sources:
+        if not isinstance(item, dict):
+            continue
+        for candidate in (
+            item.get("listenurl"),
+            item.get("listen_url"),
+            item.get("mount"),
+            item.get("@mount"),
+        ):
+            path = _mount_from_value(candidate)
+            if path and path not in mounts:
+                mounts.append(path)
+    if SCAN_MOUNTPOINT in mounts:
+        mounts.remove(SCAN_MOUNTPOINT)
+        mounts.insert(0, SCAN_MOUNTPOINT)
+    return mounts
+
+
+def _mount_from_value(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if "://" in text:
+        text = urlparse(text).path
+    text = text.lstrip("/")
+    return text if _VHF_MOUNT_RE.fullmatch(text) else None
+
+
+def _mount_http_error(target: str, status: int) -> str:
+    if status == 405:
+        return (
+            f"Icecast 2.5 отклонил {target} (HTTP 405). "
+            "HEAD запрещён, нужен GET; источник rtl-airband должен быть active, не activating"
+        )
+    if status in {401, 403}:
+        return f"Icecast отказал в доступе к {target} (HTTP {status})"
+    return (
+        f"поток {target} не подключён (Icecast HTTP {status}) — "
+        "rtl-airband не залогинен в Icecast"
+    )
+
+
+async def _icecast_http_get(
+    host: str,
+    port: int,
+    path: str,
+    timeout_s: float,
+    *,
+    accept: str = "*/*",
+    icy_metadata: bool = False,
+) -> tuple[int, dict[str, str], bytes, asyncio.StreamReader, asyncio.StreamWriter]:
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port),
             timeout=timeout_s,
         )
-    except (OSError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, OSError) as exc:
         raise IcecastStreamError(
             f"Icecast не отвечает на {host}:{port}",
             status_code=503,
         ) from exc
     try:
-        path = f"/{target}"
+        request_path = path if path.startswith("/") else f"/{path}"
+        metadata = "1" if icy_metadata else "0"
         writer.write(
-            f"GET {path} HTTP/1.0\r\n"
+            f"GET {request_path} HTTP/1.0\r\n"
             f"Host: {host}:{port}\r\n"
             "User-Agent: raspi-air-monitor\r\n"
-            "Icy-MetaData: 0\r\n"
-            "Accept: */*\r\n"
+            f"Icy-MetaData: {metadata}\r\n"
+            f"Accept: {accept}\r\n"
             "Connection: close\r\n"
             "\r\n".encode("ascii")
         )
@@ -220,35 +386,41 @@ async def open_icecast_audio(
         if separator not in header_blob:
             raise IcecastStreamError("Icecast не вернул HTTP-заголовки")
         raw_headers, leftover = header_blob.split(separator, 1)
-        status_line, *header_lines = raw_headers.split(b"\n")
-        status_text = status_line.decode("latin-1", errors="replace").strip()
-        parts = status_text.split()
+        status, headers = _parse_http_headers(raw_headers)
+        return status, headers, leftover, reader, writer
+    except IcecastStreamError:
+        await _close_writer(writer)
+        raise
+    except (TimeoutError, OSError) as exc:
+        await _close_writer(writer)
+        raise IcecastStreamError("Icecast оборвал соединение", status_code=502) from exc
+
+
+def _parse_http_headers(raw_headers: bytes) -> tuple[int, dict[str, str]]:
+    status_line, *header_lines = raw_headers.split(b"\n")
+    status_text = status_line.decode("latin-1", errors="replace").strip()
+    parts = status_text.split()
+    status = 0
+    if len(parts) >= 2:
         try:
-            status = int(parts[1]) if len(parts) >= 2 else 0
+            status = int(parts[1])
         except ValueError:
             status = 0
-        if status != 200:
-            raise IcecastStreamError(
-                "поток vhf-scan.mp3 не подключён — rtl-airband не залогинен в Icecast",
-                status_code=502,
-            )
-        content_type = "audio/mpeg"
-        for line in header_lines:
-            name, _, value = line.decode("latin-1", errors="replace").partition(":")
-            if name.strip().lower() == "content-type" and value.strip():
-                content_type = value.strip()
-                break
-        return reader, writer, leftover, content_type
-    except IcecastStreamError:
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
-        raise
-    except (OSError, asyncio.TimeoutError) as exc:
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
-        raise IcecastStreamError("Icecast оборвал соединение", status_code=502) from exc
+    elif parts and parts[0].isdigit():
+        status = int(parts[0])
+    headers: dict[str, str] = {}
+    for line in header_lines:
+        name, _, value = line.decode("latin-1", errors="replace").partition(":")
+        key = name.strip().lower()
+        if key:
+            headers[key] = value.strip()
+    return status, headers
+
+
+async def _close_writer(writer: asyncio.StreamWriter) -> None:
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
 
 
 def rewrite_loopback_stream_url(url: str, public_host: str) -> str:

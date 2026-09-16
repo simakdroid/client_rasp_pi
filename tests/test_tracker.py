@@ -4,7 +4,7 @@ import pytest
 
 from app.gis import LayerManager
 from app.models import AircraftUpdate
-from app.tracker import AircraftTracker, _page_log
+from app.tracker import GEOD, AircraftTracker, _page_log
 
 
 @pytest.mark.asyncio
@@ -843,5 +843,161 @@ async def test_hamming1_ghost_first_rekeys_to_majority_hex(tmp_path) -> None:
     assert delta is not None
     assert "551d56" in delta["remove"]
     assert delta["upsert"][0]["icao"] == "151d56"
+
+
+@pytest.mark.asyncio
+async def test_heading_follows_path_when_reported_track_is_stale(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 30)
+    started = datetime(2026, 9, 16, 7, 0, tzinfo=UTC)
+    lon, lat, _ = GEOD.fwd(37.0, 55.0, 0.0, 180)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.0,
+                lon=37.0,
+                track_deg=270,
+                speed_kt=18,
+                on_ground=True,
+                received_at=started,
+                position_at=started,
+            )
+        ]
+    )
+    later = started + timedelta(seconds=12)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=lat,
+                lon=lon,
+                track_deg=270,
+                speed_kt=18,
+                altitude_ft=400,
+                on_ground=False,
+                received_at=later,
+                position_at=later,
+            )
+        ]
+    )
+    live = (await tracker.snapshot())[0]
+    assert live["track_deg"] == 270
+    assert live["heading_deg"] == pytest.approx(0.0, abs=1.0)
+    assert live["calculated_track_deg"] == pytest.approx(0.0, abs=1.0)
+    assert live["altitude_ft"] == 400
+
+
+@pytest.mark.asyncio
+async def test_taxi_heading_updates_before_track_point(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 30)
+    started = datetime(2026, 9, 16, 7, 10, tzinfo=UTC)
+    lon, lat, _ = GEOD.fwd(37.0, 55.0, 90.0, 15)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.0,
+                lon=37.0,
+                track_deg=0,
+                on_ground=True,
+                received_at=started,
+                position_at=started,
+            )
+        ]
+    )
+    later = started + timedelta(seconds=8)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=lat,
+                lon=lon,
+                track_deg=0,
+                on_ground=True,
+                received_at=later,
+                position_at=later,
+            )
+        ]
+    )
+    live = (await tracker.snapshot())[0]
+    assert len(live["track"]) == 1
+    assert live["heading_deg"] == pytest.approx(90.0, abs=2.0)
+
+
+@pytest.mark.asyncio
+async def test_fresh_velocity_keeps_reported_track(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1)
+    started = datetime(2026, 9, 16, 7, 20, tzinfo=UTC)
+    lon, lat, _ = GEOD.fwd(37.0, 55.0, 10.0, 400)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.0,
+                lon=37.0,
+                track_deg=12,
+                speed_kt=220,
+                on_ground=False,
+                received_at=started,
+                position_at=started,
+            )
+        ]
+    )
+    later = started + timedelta(seconds=2)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=lat,
+                lon=lon,
+                track_deg=18,
+                speed_kt=230,
+                on_ground=False,
+                received_at=later,
+                position_at=later,
+            )
+        ]
+    )
+    live = (await tracker.snapshot())[0]
+    assert live["track_deg"] == 18
+    assert live["heading_deg"] == 18
+
+
+@pytest.mark.asyncio
+async def test_tracker_exports_possible_range_without_inventing_position(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 60, 10, 1, station_alt_m=30)
+    now = datetime.now(UTC)
+    await tracker.apply(
+        [AircraftUpdate(icao="abc123", altitude_ft=35000, received_at=now)]
+    )
+    snapshot = await tracker.snapshot()
+    assert snapshot[0]["lat"] is None
+    assert snapshot[0]["lon"] is None
+    assert snapshot[0]["position_source"] is None
+    assert snapshot[0]["possible_range_km"] == 448.1
+
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="def456",
+                lat=55.1,
+                lon=37.1,
+                altitude_ft=10000,
+                received_at=now,
+                position_at=now,
+            )
+        ]
+    )
+    located = next(item for item in await tracker.snapshot() if item["icao"] == "def456")
+    assert located["position_source"] == "adsb"
+    assert located["possible_range_km"] == 250.0
 
 

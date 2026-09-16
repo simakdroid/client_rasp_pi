@@ -24,6 +24,10 @@
     markers: new Map(),
     archiveMarkers: new Map(),
     tracks: new Map(),
+    estimateLegs: new Map(),
+    rangeRing: null,
+    estimateMaxS: 90,
+    coverageMaxKm: 450,
     customLayers: new Map(),
     socket: null,
     reconnectTimer: null,
@@ -59,6 +63,7 @@
     playingChannelName: "",
     radioPlayback: "idle",
     radioError: "",
+    radioPlayGeneration: 0,
     squelchSnrDb: 0,
     journalError: "",
     stripRows: new Map(),
@@ -102,7 +107,10 @@
     cacheElements();
     bindUi();
     tickClock();
-    window.setInterval(tickClock, 1000);
+    window.setInterval(() => {
+      tickClock();
+      refreshEstimates();
+    }, 1000);
 
     if (!window.L) {
       setConnection("offline", "Карта недоступна: Leaflet не загружен");
@@ -274,7 +282,11 @@
     const station = state.config.station || {};
     const lat = latNum(station.lat ?? state.config.station_lat ?? mapConfig.center?.[0]);
     const lon = lonNum(station.lon ?? state.config.station_lon ?? mapConfig.center?.[1]);
-    state.station = lat !== null && lon !== null ? { lat, lon } : null;
+    state.station = lat !== null && lon !== null
+      ? { lat, lon, alt_m: finite(station.alt_m) ?? 30 }
+      : null;
+    state.estimateMaxS = finite(state.config.estimate_max_s) ?? 90;
+    state.coverageMaxKm = finite(state.config.coverage_max_km) ?? 450;
     el["station-name"].textContent = text(
       station.name ?? state.config.station_name,
       "Локальная станция",
@@ -293,6 +305,9 @@
       zoomControl: true,
       preferCanvas: true,
     });
+    state.map.createPane("estimate");
+    state.map.getPane("estimate").style.zIndex = 390;
+    state.map.getPane("estimate").style.pointerEvents = "none";
     state.map.on("dragstart", () => {
       if (!state.autoFitting) state.mapUserMoved = true;
     });
@@ -486,14 +501,15 @@
     }
     state.aircraft.set(icao, merged);
 
-    const lat = latNum(merged.lat ?? merged.latitude);
-    const lon = lonNum(merged.lon ?? merged.lng ?? merged.longitude);
-    if (lat !== null && lon !== null) {
-      updateMarker(merged, lat, lon);
+    const display = displayPosition(merged);
+    if (display.lat !== null && display.lon !== null) {
+      updateMarker(merged, display.lat, display.lon, display.source === "estimated");
       updateTrack(merged);
+      updateEstimateLeg(merged, display);
     } else {
       removeMapObjects(icao);
     }
+    refreshSelectedRangeRing();
     if (render) finishAircraftUpdate();
   }
 
@@ -502,6 +518,7 @@
     state.aircraft.delete(icao);
     removeMapObjects(icao);
     if (state.selectedIcao === icao) state.selectedIcao = null;
+    refreshSelectedRangeRing();
     if (render) finishAircraftUpdate();
   }
 
@@ -514,6 +531,7 @@
       state.aircraft.delete(icao);
       removeMapObjects(icao);
       if (state.selectedIcao === icao) state.selectedIcao = null;
+      refreshSelectedRangeRing();
     }
     const merged = { ...(state.archived.get(key) || {}), ...aircraft, icao, status: "archived" };
     state.archived.set(key, merged);
@@ -533,10 +551,13 @@
   function removeMapObjects(icao) {
     const marker = state.markers.get(icao);
     const track = state.tracks.get(icao);
+    const estimate = state.estimateLegs.get(icao);
     if (marker) state.map.removeLayer(marker);
     if (track) state.map.removeLayer(track);
+    if (estimate) state.map.removeLayer(estimate);
     state.markers.delete(icao);
     state.tracks.delete(icao);
+    state.estimateLegs.delete(icao);
   }
 
   function removeArchiveMarker(key) {
@@ -554,7 +575,7 @@
     });
   }
 
-  function updateMarker(aircraft, lat, lon) {
+  function updateMarker(aircraft, lat, lon, estimated = false) {
     const icao = aircraft.icao;
     if (!shouldShowContact(aircraft)) {
       removeMapObjects(icao);
@@ -562,28 +583,28 @@
     }
     const altitude = aircraftAltitude(aircraft);
     const color = altitudeColor(altitude);
-    const rotation = finite(
-      aircraft.track_deg ?? aircraft.calculated_track_deg ?? aircraft.true_heading_deg ?? aircraft.heading,
-    ) ?? 0;
+    const rotation = aircraftHeading(aircraft) ?? 0;
     let marker = state.markers.get(icao);
-    const icon = aircraftIcon(color, rotation);
+    const icon = aircraftIcon(color, rotation, false, estimated);
 
     if (!marker) {
       marker = L.marker([lat, lon], {
         icon,
         zIndexOffset: Math.round(altitude || 0),
         riseOnHover: true,
+        opacity: estimated ? .78 : 1,
       }).addTo(state.map);
       marker.on("click", () => selectAircraft(icao));
-      marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft));
+      marker.bindTooltip(createDataBlock(aircraft), dataBlockOptions(aircraft, false, estimated));
       marker.bindPopup(createTooltip(aircraft), { className: "aircraft-tooltip" });
       state.markers.set(icao, marker);
       marker._airmonStamp = "";
     } else {
-      const stamp = `${lat.toFixed(5)}|${lon.toFixed(5)}|${color}|${rotation}|${text(aircraft.callsign, "")}|${text(aircraft.sector, "")}|${aircraftTypeCode(aircraft)}|${aircraft.revision || ""}`;
+      const stamp = `${lat.toFixed(5)}|${lon.toFixed(5)}|${color}|${rotation}|${text(aircraft.callsign, "")}|${text(aircraft.sector, "")}|${aircraftTypeCode(aircraft)}|${aircraft.revision || ""}|${estimated ? "e" : "m"}`;
       if (marker._airmonStamp !== stamp) {
         marker.setLatLng([lat, lon]);
         marker.setIcon(icon);
+        marker.setOpacity(estimated ? .78 : 1);
         marker.setTooltipContent(createDataBlock(aircraft));
         marker.setPopupContent(createTooltip(aircraft));
         marker.setZIndexOffset(Math.round(altitude || 0));
@@ -593,25 +614,26 @@
         "is-selected",
         icao === state.selectedIcao,
       );
+      marker.getTooltip()?.getElement()?.classList.toggle("is-estimated", estimated);
     }
   }
 
-  function dataBlockOptions(aircraft, archived = false) {
+  function dataBlockOptions(aircraft, archived = false, estimated = false) {
     return {
       permanent: true,
       direction: "right",
       offset: [18, 0],
       className: `aircraft-label${selectionKey(aircraft, archived) === state.selectedIcao ? " is-selected" : ""}${
         archived ? " is-archived" : ""
-      }`,
+      }${estimated ? " is-estimated" : ""}`,
       opacity: 1,
       interactive: false,
     };
   }
 
-  function aircraftIcon(color, rotation, archived = false) {
+  function aircraftIcon(color, rotation, archived = false, estimated = false) {
     return L.divIcon({
-      className: `aircraft-marker${archived ? " is-archived" : ""}`,
+      className: `aircraft-marker${archived ? " is-archived" : ""}${estimated ? " is-estimated" : ""}`,
       iconSize: [30, 30],
       iconAnchor: [15, 15],
       html: `<div class="aircraft-marker__plane" style="--rotation:${rotation}deg;color:${color}">
@@ -646,7 +668,8 @@
     const speed = aircraftSpeed(aircraft);
     const motion = document.createElement("div");
     motion.className = "aircraft-label__line";
-    motion.textContent = `${aircraft.on_ground ? "GND" : formatBlockAltitude(aircraft)}${trend}${
+    const estimated = displayPosition(aircraft).source === "estimated";
+    motion.textContent = `${estimated ? "оц. " : ""}${aircraft.on_ground ? "GND" : formatBlockAltitude(aircraft)}${trend}${
       speed === null ? "" : ` ${String(Math.round(speed)).padStart(3, "0")}`
     }`;
     root.append(motion);
@@ -689,6 +712,12 @@
       ["Код ответчика", text(aircraft.squawk)],
       ["Положение", formatPosition(aircraft)],
     ];
+    const display = displayPosition(aircraft);
+    if (display.source === "estimated") {
+      rows.push(["Оценка", `курс и скорость, ${Math.round(display.ageS)} с`]);
+    } else if (display.lat === null && display.rangeKm !== null) {
+      rows.push(["Зона", "радиогоризонт по высоте"]);
+    }
     if (text(aircraft.sector, "").trim()) {
       rows.push(["Сектор", aircraft.sector]);
     }
@@ -753,8 +782,101 @@
       if (state.tracksVisible && !state.map.hasLayer(track)) track.addTo(state.map);
       if (!state.tracksVisible && state.map.hasLayer(track)) state.map.removeLayer(track);
     });
+    state.estimateLegs.forEach((leg) => {
+      if (state.tracksVisible && !state.map.hasLayer(leg)) leg.addTo(state.map);
+      if (!state.tracksVisible && state.map.hasLayer(leg)) state.map.removeLayer(leg);
+    });
     el["toggle-tracks"].classList.toggle("is-active", state.tracksVisible);
     el["toggle-tracks"].setAttribute("aria-pressed", String(state.tracksVisible));
+  }
+
+  function updateEstimateLeg(aircraft, display) {
+    if (!state.map || !shouldShowContact(aircraft) || display.source !== "estimated") {
+      removeEstimateLeg(aircraft.icao);
+      return;
+    }
+    const points = [
+      [display.measuredLat, display.measuredLon],
+      [display.lat, display.lon],
+    ];
+    const options = {
+      pane: "estimate",
+      color: altitudeColor(aircraftAltitude(aircraft)),
+      weight: 2,
+      opacity: .8,
+      dashArray: "5 7",
+      interactive: false,
+    };
+    const existing = state.estimateLegs.get(aircraft.icao);
+    if (existing) {
+      existing.setLatLngs(points);
+      existing.setStyle(options);
+      return;
+    }
+    const leg = L.polyline(points, options);
+    if (state.tracksVisible) leg.addTo(state.map);
+    state.estimateLegs.set(aircraft.icao, leg);
+  }
+
+  function removeEstimateLeg(icao) {
+    const leg = state.estimateLegs.get(icao);
+    if (leg) state.map.removeLayer(leg);
+    state.estimateLegs.delete(icao);
+  }
+
+  function refreshSelectedRangeRing() {
+    if (!state.map) return null;
+    const aircraft = state.aircraft.get(state.selectedIcao);
+    const display = aircraft ? displayPosition(aircraft) : null;
+    const showRing = Boolean(
+      aircraft
+      && display
+      && display.lat === null
+      && display.rangeKm
+      && state.station,
+    );
+    if (!showRing) {
+      if (state.rangeRing) {
+        state.map.removeLayer(state.rangeRing);
+        state.rangeRing = null;
+      }
+      return null;
+    }
+    const options = {
+      pane: "estimate",
+      color: altitudeColor(aircraftAltitude(aircraft)),
+      weight: 1.5,
+      opacity: .75,
+      dashArray: "6 8",
+      fillColor: altitudeColor(aircraftAltitude(aircraft)),
+      fillOpacity: .05,
+      interactive: false,
+    };
+    if (state.rangeRing) {
+      state.rangeRing.setLatLng([state.station.lat, state.station.lon]);
+      state.rangeRing.setRadius(display.rangeKm * 1000);
+      state.rangeRing.setStyle(options);
+    } else {
+      state.rangeRing = L.circle(
+        [state.station.lat, state.station.lon],
+        { ...options, radius: display.rangeKm * 1000 },
+      ).addTo(state.map);
+    }
+    return state.rangeRing;
+  }
+
+  function refreshEstimates() {
+    if (!state.map) return;
+    state.aircraft.forEach((aircraft) => {
+      const display = displayPosition(aircraft);
+      if (display.source === "estimated") {
+        updateMarker(aircraft, display.lat, display.lon, true);
+        updateEstimateLeg(aircraft, display);
+      } else {
+        removeEstimateLeg(aircraft.icao);
+      }
+    });
+    refreshSelectedRangeRing();
   }
 
   function toggleSurfaceVehicles() {
@@ -766,11 +888,15 @@
       if (selected && isSurfaceVehicle(selected)) state.selectedIcao = null;
     }
     state.aircraft.forEach((aircraft) => {
-      const lat = latNum(aircraft.lat ?? aircraft.latitude);
-      const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-      if (lat !== null && lon !== null) updateMarker(aircraft, lat, lon);
+      const display = displayPosition(aircraft);
+      if (display.lat !== null && display.lon !== null) {
+        updateMarker(aircraft, display.lat, display.lon, display.source === "estimated");
+      } else {
+        removeMapObjects(aircraft.icao);
+      }
       updateTrack(aircraft);
     });
+    refreshSelectedRangeRing();
     renderAircraftList();
   }
 
@@ -802,16 +928,25 @@
     if (previous && previous !== icao) refreshAircraftMarker(previous);
     refreshAircraftMarker(icao);
     const marker = state.markers.get(icao) || state.archiveMarkers.get(icao);
-    if (marker) state.map.panTo(marker.getLatLng());
+    if (marker) {
+      state.map.panTo(marker.getLatLng());
+    } else {
+      const ring = refreshSelectedRangeRing();
+      if (ring && typeof ring.getBounds === "function") {
+        state.map.fitBounds(ring.getBounds(), { maxZoom: 8, padding: [28, 28] });
+      }
+    }
     renderAircraftList();
   }
 
   function refreshAircraftMarker(icao) {
     const live = state.aircraft.get(icao);
     if (!live) return;
-    const lat = latNum(live.lat ?? live.latitude);
-    const lon = lonNum(live.lon ?? live.lng ?? live.longitude);
-    if (lat !== null && lon !== null) updateMarker(live, lat, lon);
+    const display = displayPosition(live);
+    if (display.lat !== null && display.lon !== null) {
+      updateMarker(live, display.lat, display.lon, display.source === "estimated");
+    }
+    refreshSelectedRangeRing();
   }
 
   function matchesSearch(aircraft) {
@@ -979,9 +1114,10 @@
 
   function refreshAircraftMarkers() {
     state.aircraft.forEach((aircraft) => {
-      const lat = latNum(aircraft.lat ?? aircraft.latitude);
-      const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-      if (lat !== null && lon !== null) updateMarker(aircraft, lat, lon);
+      const display = displayPosition(aircraft);
+      if (display.lat !== null && display.lon !== null) {
+        updateMarker(aircraft, display.lat, display.lon, display.source === "estimated");
+      }
     });
   }
 
@@ -1073,6 +1209,16 @@
 
   function aircraftSpeed(aircraft) {
     return finite(aircraft.speed_kt ?? aircraft.speed ?? aircraft.ground_speed ?? aircraft.gs);
+  }
+
+  function aircraftHeading(aircraft) {
+    return finite(
+      aircraft.heading_deg
+      ?? aircraft.calculated_track_deg
+      ?? aircraft.track_deg
+      ?? aircraft.true_heading_deg
+      ?? aircraft.heading,
+    );
   }
 
   function aircraftDistance(aircraft) {
@@ -1191,9 +1337,24 @@
   };
   const formatDistance = (value) => value === null ? "—" : `${value < 10 ? value.toFixed(1) : Math.round(value)} км`;
   function formatPosition(aircraft) {
-    const lat = latNum(aircraft.lat ?? aircraft.latitude);
-    const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
-    if (lat === null || lon === null) return "нет координат";
+    const display = displayPosition(aircraft);
+    if (display.source === "estimated") {
+      const distance = (!state.station)
+        ? null
+        : haversineKm(state.station.lat, state.station.lon, display.lat, display.lon);
+      const azimuth = (!state.station)
+        ? ""
+        : formatAzimuth(initialBearingDeg(state.station.lat, state.station.lon, display.lat, display.lon));
+      const parts = ["оценка"];
+      if (azimuth) parts.push(azimuth);
+      if (distance !== null) parts.push(formatDistance(distance));
+      return parts.join(" · ");
+    }
+    const lat = display.lat;
+    const lon = display.lon;
+    if (lat === null || lon === null) {
+      return display.rangeKm !== null ? `зона ≤ ${formatDistance(display.rangeKm)}` : "нет координат";
+    }
     const parts = [];
     const azimuth = formatAzimuth(aircraftAzimuth(aircraft));
     const distance = aircraftDistance(aircraft);
@@ -1244,6 +1405,76 @@
     const a = Math.sin(dLat / 2) ** 2 +
       Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
     return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function destinationPoint(lat, lon, bearingDeg, distanceM) {
+    const radius = 6371008.8;
+    const angular = distanceM / radius;
+    const bearing = bearingDeg * Math.PI / 180;
+    const phi1 = lat * Math.PI / 180;
+    const lambda1 = lon * Math.PI / 180;
+    const sinPhi2 = Math.sin(phi1) * Math.cos(angular)
+      + Math.cos(phi1) * Math.sin(angular) * Math.cos(bearing);
+    const phi2 = Math.asin(Math.min(1, Math.max(-1, sinPhi2)));
+    const lambda2 = lambda1 + Math.atan2(
+      Math.sin(bearing) * Math.sin(angular) * Math.cos(phi1),
+      Math.cos(angular) - Math.sin(phi1) * Math.sin(phi2),
+    );
+    return {
+      lat: phi2 * 180 / Math.PI,
+      lon: ((lambda2 * 180 / Math.PI + 540) % 360) - 180,
+    };
+  }
+
+  function radioHorizonKm(altitudeFt, onGround) {
+    const altitude = onGround ? 0 : altitudeFt;
+    if (altitude === null || altitude === undefined) return null;
+    const stationM = Math.max(0, finite(state.station?.alt_m) ?? 30);
+    const aircraftM = Math.max(0, altitude * 0.3048);
+    const rangeKm = 4.12 * (Math.sqrt(stationM) + Math.sqrt(aircraftM));
+    const cap = state.coverageMaxKm || 450;
+    return Math.round(Math.min(Math.max(rangeKm, 0), cap) * 10) / 10;
+  }
+
+  function displayPosition(aircraft) {
+    const measuredLat = latNum(aircraft.lat ?? aircraft.latitude);
+    const measuredLon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
+    const rangeKm = finite(aircraft.possible_range_km)
+      ?? radioHorizonKm(aircraftAltitude(aircraft), aircraft.on_ground === true);
+    if (measuredLat === null || measuredLon === null) {
+      return { lat: null, lon: null, source: null, rangeKm, ageS: null };
+    }
+    const heading = aircraftHeading(aircraft);
+    const speed = aircraftSpeed(aircraft);
+    const stamp = aircraft.position_at || aircraft.updated_at;
+    const ageS = stamp ? Math.max(0, (Date.now() - new Date(stamp).getTime()) / 1000) : 0;
+    const canCoast = aircraft.on_ground !== true
+      && heading !== null
+      && speed !== null
+      && speed >= 5
+      && ageS > 2
+      && ageS <= (state.estimateMaxS || 90);
+    if (!canCoast) {
+      return {
+        lat: measuredLat,
+        lon: measuredLon,
+        source: "adsb",
+        rangeKm,
+        ageS,
+        measuredLat,
+        measuredLon,
+      };
+    }
+    const moved = destinationPoint(measuredLat, measuredLon, heading, speed * (1852 / 3600) * ageS);
+    return {
+      lat: moved.lat,
+      lon: moved.lon,
+      source: "estimated",
+      rangeKm,
+      ageS,
+      measuredLat,
+      measuredLon,
+    };
   }
 
   function initialBearingDeg(lat1, lon1, lat2, lon2) {
@@ -2403,9 +2634,16 @@
     if (error && error.name === "NotAllowedError") {
       return "браузер блокирует автозапуск — нажмите Play на плеере";
     }
+    if (error && error.message && error.name !== "AbortError") {
+      const message = String(error.message).trim();
+      if (message && message !== "ошибка потока") return message;
+    }
     const media = el["radio-audio"]?.error;
+    if (media && media.code === 3) {
+      return "браузер не смог декодировать MP3-поток";
+    }
     if (media && (media.code === 2 || media.code === 4)) {
-      return "нет потока Icecast: проверьте icecast2 и rtl-airband (mount vhf-scan.mp3)";
+      return "нет потока Icecast: rtl-airband должен быть active (не activating), mount vhf-scan.mp3 по GET";
     }
     return "ошибка потока";
   }
@@ -2419,10 +2657,12 @@
       updateNowPlaying();
     });
     audio.addEventListener("waiting", () => {
+      if (state.radioPlayback === "error") return;
       state.radioPlayback = "waiting";
       updateNowPlaying();
     });
     audio.addEventListener("ended", () => {
+      if (state.radioPlayback === "error") return;
       state.radioPlayback = "ended";
       updateNowPlaying();
     });
@@ -2452,7 +2692,8 @@
   }
 
   async function playRadioChannel(channel, row) {
-    const streamUrl = radioStreamUrl();
+    const generation = ++state.radioPlayGeneration;
+    const audio = el["radio-audio"];
     state.playingChannelId = text(channel.id, "");
     state.playingChannelName = text(channel.name ?? channel.label, "VHF-канал");
     state.radioPlayback = "waiting";
@@ -2460,10 +2701,23 @@
     document.querySelectorAll(".radio-channel").forEach((item) => item.classList.remove("is-playing"));
     row.classList.add("is-playing");
     updateNowPlaying();
-    el["radio-audio"].src = streamUrl;
     try {
-      await el["radio-audio"].play();
+      await fetchJson("/api/radio/stream-status", { timeoutMs: 5000 });
     } catch (error) {
+      if (generation !== state.radioPlayGeneration) return;
+      state.radioPlayback = "error";
+      state.radioError = radioPlaybackErrorText(error);
+      updateNowPlaying();
+      return;
+    }
+    if (generation !== state.radioPlayGeneration) return;
+    audio.pause();
+    audio.src = `${radioStreamUrl()}?t=${Date.now()}`;
+    try {
+      await audio.play();
+    } catch (error) {
+      if (generation !== state.radioPlayGeneration) return;
+      if (error?.name === "AbortError") return;
       state.radioPlayback = "error";
       state.radioError = radioPlaybackErrorText(error);
       updateNowPlaying();

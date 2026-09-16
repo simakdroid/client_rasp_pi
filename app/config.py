@@ -64,6 +64,7 @@ class Settings(BaseSettings):
 
     station_lat: float = Field(default=57.1896, ge=-90, le=90)
     station_lon: float = Field(default=65.3243, ge=-180, le=180)
+    station_alt_m: float = Field(default=30, ge=0, le=9000)
     station_name: str = "Тюмень/Рощино"
 
     adsb_source: Literal["json", "sbs"] = "json"
@@ -87,6 +88,7 @@ class Settings(BaseSettings):
     raw_log_size: int = Field(default=1000, ge=10, le=50000)
     adsb_poll_interval_s: float = Field(default=0.75, ge=0.2, le=10)
     aircraft_ttl_s: int = Field(default=60, ge=5, le=3600)
+    estimate_max_s: float = Field(default=90, ge=5, le=600)
     track_max_points: int = Field(default=300, ge=2, le=5000)
     track_min_distance_m: float = Field(default=30, ge=0, le=10000)
     event_log_size: int = Field(default=500, ge=10, le=10000)

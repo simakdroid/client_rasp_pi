@@ -705,6 +705,8 @@ def test_chromium_before_backend_recovers_interface() -> None:
     assert "scheduleReconnect" in FRONTEND
     assert "connectAircraftSocket" in FRONTEND
     assert "Повторное подключение" in FRONTEND
+    assert "function displayPosition(" in FRONTEND
+    assert "зона ≤" in FRONTEND
     assert "Restart=always" in (ROOT / "deploy" / "systemd" / "adsb-kiosk.service").read_text(
         encoding="utf-8"
     )

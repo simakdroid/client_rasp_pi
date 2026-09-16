@@ -8,6 +8,7 @@ from app.radio import (
     RadioMonitor,
     _parse_prometheus_stats,
     open_icecast_audio,
+    probe_icecast_audio,
     rewrite_loopback_stream_url,
 )
 
@@ -128,6 +129,106 @@ async def test_open_icecast_audio_streams_mp3_body() -> None:
             await writer.wait_closed()
         assert content_type == "audio/mpeg"
         assert body.startswith(b"ID3")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_open_icecast_audio_accepts_icy_status() -> None:
+    async def handler(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"ICY 200 OK\r\nicy-br:16\r\nContent-Type: audio/mpeg\r\n\r\nID3icy")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        reader, writer, leftover, content_type = await open_icecast_audio(
+            host="127.0.0.1",
+            port=port,
+        )
+        try:
+            body = leftover + await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+        assert content_type == "audio/mpeg"
+        assert body.startswith(b"ID3icy")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_open_icecast_audio_falls_back_to_active_mount() -> None:
+    async def handler(reader, writer):
+        request = await reader.readuntil(b"\r\n\r\n")
+        if b"GET /vhf-scan.mp3" in request:
+            writer.write(b"HTTP/1.0 404 File Not Found\r\n\r\n")
+        elif b"GET /admin/publicstats.json" in request:
+            body = (
+                b'{"icestats":{"source":{"mount":"/vhf-118200.mp3",'
+                b'"listenurl":"http://127.0.0.1:8000/vhf-118200.mp3"}}}'
+            )
+            writer.write(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body)
+        elif b"GET /status-json.xsl" in request:
+            body = (
+                b'{"icestats":{"source":{"listenurl":'
+                b'"http://127.0.0.1:8000/vhf-118200.mp3"}}}'
+            )
+            writer.write(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body)
+        elif b"GET /vhf-118200.mp3" in request:
+            writer.write(b"HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\n\r\nID3alt")
+        else:
+            writer.write(b"HTTP/1.0 404 File Not Found\r\n\r\n")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        reader, writer, leftover, content_type = await open_icecast_audio(
+            host="127.0.0.1",
+            port=port,
+        )
+        try:
+            body = leftover + await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+        assert content_type == "audio/mpeg"
+        assert body.startswith(b"ID3alt")
+        probed = await probe_icecast_audio(host="127.0.0.1", port=port)
+        assert probed == "audio/mpeg"
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_open_icecast_audio_maps_head_not_allowed() -> None:
+    async def handler(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 405 Method Not Allowed\r\n"
+            b"Allow: GET, DELETE, OPTIONS\r\n"
+            b"Content-Type: text/xml; charset=utf-8\r\n\r\n"
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        with pytest.raises(IcecastStreamError) as caught:
+            await open_icecast_audio(host="127.0.0.1", port=port)
+        assert caught.value.status_code == 502
+        assert "405" in str(caught.value)
     finally:
         server.close()
         await server.wait_closed()

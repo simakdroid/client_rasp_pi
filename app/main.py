@@ -22,7 +22,7 @@ from .config import Settings, get_settings
 from .diagnostics import collect_diagnostics, read_adsb_status, read_host_status
 from .gis import LayerManager, UnsupportedTileFormatError, tile_http_metadata
 from .models import AircraftTypeInput, RadioChannelInput, RadioSquelchInput
-from .radio import IcecastStreamError, RadioMonitor, open_icecast_audio
+from .radio import IcecastStreamError, RadioMonitor, open_icecast_audio, probe_icecast_audio
 from .radio_channels import RadioChannelCatalog
 from .raw_messages import RawMessageLog, ingest_raw_messages
 from .runtime import RuntimeStatus, run_supervised
@@ -49,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.coverage_max_km,
         type_catalog,
         max_active_aircraft=settings.max_active_aircraft,
+        station_alt_m=settings.station_alt_m,
     )
     hub = BroadcastHub(
         queue_size=settings.websocket_queue_size,
@@ -297,6 +298,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "name": settings.station_name,
                 "lat": settings.station_lat,
                 "lon": settings.station_lon,
+                "alt_m": settings.station_alt_m,
             },
             "map": {
                 "osm": {"url": settings.osm_url, "max_zoom": 19},
@@ -310,6 +312,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "admin_required": bool(settings.admin_token),
             "track_max_points": settings.track_max_points,
+            "estimate_max_s": settings.estimate_max_s,
+            "coverage_max_km": settings.coverage_max_km,
             "websocket_interval_ms": round(settings.websocket_interval_s * 1000),
             "websocket_heartbeat_ms": round(settings.websocket_heartbeat_s * 1000),
         }
@@ -470,6 +474,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             item["stream_url"] = stream_url
         return items
 
+    def _radio_stream_headers() -> dict[str, str]:
+        # Fake length turns off HTTP/1.1 chunked encoding; Chromium's MP3
+        # demuxer often fails on chunked live streams with MEDIA_ERR_DECODE.
+        return {
+            "Cache-Control": "no-cache, no-store",
+            "Pragma": "no-cache",
+            "Accept-Ranges": "none",
+            "X-Accel-Buffering": "no",
+            "Content-Length": "2147483647",
+        }
+
+    @app.get("/api/radio/stream-status")
+    async def radio_stream_status() -> dict[str, object]:
+        try:
+            content_type = await probe_icecast_audio(
+                host=settings.radio_icecast_host,
+                port=settings.radio_icecast_port,
+            )
+        except IcecastStreamError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return {"ok": True, "content_type": content_type}
+
+    @app.head("/api/radio/stream")
+    async def radio_stream_head() -> Response:
+        try:
+            content_type = await probe_icecast_audio(
+                host=settings.radio_icecast_host,
+                port=settings.radio_icecast_port,
+            )
+        except IcecastStreamError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return Response(
+            status_code=200,
+            media_type=content_type or "audio/mpeg",
+            headers=_radio_stream_headers(),
+        )
+
     @app.get("/api/radio/stream")
     async def radio_stream() -> StreamingResponse:
         try:
@@ -497,10 +538,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return StreamingResponse(
             body(),
             media_type=content_type or "audio/mpeg",
-            headers={
-                "Cache-Control": "no-store",
-                "X-Accel-Buffering": "no",
-            },
+            headers=_radio_stream_headers(),
         )
 
     def _radio_config_payload(request: Request) -> dict[str, object]:
