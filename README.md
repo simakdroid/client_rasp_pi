@@ -1,14 +1,7 @@
 # Raspberry Pi Air Monitor
 
-Версия **2.4.0**. Локальное модульное приложение для Raspberry Pi 5: ADS‑B через `readsb`,
-ACARS через `acarsdec` на втором RTL‑SDR и интерактивная GIS-карта. Голосовой VHF AM
-слушается отдельно (например, на Sangean), не через Icecast.
-
-## Что изменилось в 2.4.0
-
-Вкладка «Радио» заменена на журнал ACARS. Второй донгл (`0118`) больше не кормит
-`rtl_airband`/Icecast: `acarsdec` декодирует POA-частоты около 131.5–131.8 МГц
-и шлёт JSON по UDP на backend. Плеер, шумодав и список AM-каналов убраны.
+Версия **2.3.1**. Локальное модульное приложение для Raspberry Pi 5: ADS‑B через `readsb`,
+авиационный VHF AM через `rtl_airband`/Icecast и интерактивная GIS-карта.
 
 ## Что изменилось в 2.3.1
 
@@ -81,18 +74,18 @@ RTL-SDR serial=1090 ─► readsb ─► /run/readsb/aircraft.json
                                      ▼
                              Chromium Kiosk/Leaflet
                                      ▲
-RTL-SDR serial=0118 ─► acarsdec ─► UDP JSON :5550
+RTL-SDR serial=0118 ─► rtl_airband ─► Icecast HTTP audio
 ```
 
-`readsb` и `acarsdec` остаются отдельными systemd-сервисами. Web-процесс не
+`readsb` и `rtl_airband` остаются отдельными systemd-сервисами. Web-процесс не
 получает root-доступ и не управляет systemd. Это изолирует сбой UI от
-приёма и исключает переключение не того USB-донгла.
+радиоприёма и исключает переключение не того USB-донгла.
 
 Режим приёмников определяется автоматически:
 
 - один совместимый RTL‑SDR — открывается как индекс `0` и целиком назначается
-  `readsb`, даже если EEPROM serial пуст; ACARS отключён;
-- два RTL‑SDR — `1090` используется для ADS‑B, `0118` для ACARS;
+  `readsb`, даже если EEPROM serial пуст; радио отключено;
+- два RTL‑SDR — `1090` используется для ADS‑B, `0118` для VHF AM;
 - при неоднозначной конфигурации из нескольких устройств без preferred serial
   readsb не стартует, чтобы случайно не занять VHF-приёмник.
 
@@ -125,12 +118,11 @@ WebSocket отправляет начальный `snapshot`, затем `delta`
 │   ├── gis.py             # GeoJSON, KML, MBTiles, geofencing
 │   ├── main.py            # FastAPI, REST/WS, фоновые задачи
 │   ├── models.py          # нормализованные модели
-│   ├── acars.py           # UDP JSON от acarsdec
-│   ├── radio.py           # роли RTL-SDR (1090 / 0118)
+│   ├── radio.py           # каталог каналов/индикатор активности
 │   ├── tracker.py         # состояния, треки, курс, высотная скорость
 │   └── static/            # Leaflet Web-UI
 ├── data/layers/           # пользовательские GeoJSON/KML/MBTiles
-├── deploy/                # udev, systemd, выбор RTL-SDR, acarsdec, kiosk
+├── deploy/                # udev, systemd, выбор RTL-SDR, rtl_airband, kiosk
 ├── docs/                  # установка Raspberry Pi OS
 ├── tests/
 ├── .env.example
@@ -198,7 +190,7 @@ ruff check .
 curl http://127.0.0.1:8080/api/health
 ```
 
-Полная настройка донглов, acarsdec, сервисов и Kiosk приведена в
+Полная настройка донглов, Icecast, сервисов и Kiosk приведена в
 [`docs/raspberry-pi-setup.md`](docs/raspberry-pi-setup.md).
 
 ## 5. API-контракт
@@ -228,17 +220,23 @@ curl http://127.0.0.1:8080/api/health
 - `GET /api/station` — панель станции: источники, возраст позиции, задачи,
   SDR-роли, диск/температура, GIS и покрытие.
 - `GET /api/station/diagnostics` — пакет поддержки: версии ПО, обезличенная
-  конфигурация, последние ошибки GIS/покрытия. Без токенов и паролей.
+  конфигурация, последние ошибки GIS/покрытия. Без токенов, паролей и
+  stream URL.
 - `POST /api/station/session/start|stop` и `GET /api/station/session` —
   запись ADS‑B в память (не архив за неделю). `POST /api/station/session/replay`
   воспроизводит последнюю запись или JSON `events[]` из файла.
 - `GET /api/aircraft-types` — ручной справочник ICAO→тип (fallback, если ADS‑B
   не дал тип). Писатель файла — сам процесс; внешние правки подхватываются
   фоновым `refresh`, а не GET/lookup. `POST`/`DELETE` требуют админ-токен.
-- `GET /api/acars` — журнал ACARS с тем же контрактом страниц, что и сырой ADS‑B.
-  `POST /api/acars/clear` требует админ-токен. Частоты задаются в env
-  (`AIRMON_ACARS_FREQUENCIES_MHZ` / `ACARS_FREQUENCIES`), не из UI.
+- `GET /api/radio/channels` — частоты, stream URL и опциональная активность.
+  Плеер ходит в `GET /api/radio/stream`: бэкенд проксирует локальный Icecast
+  `vhf-scan.mp3`, браузеру порт 8000 не нужен. Уровни `level_dbfs` — качество
+  VHF, не наличие Icecast mount.
 - `GET /api/health` — readiness процесса.
+
+Активность VHF берётся не из Icecast (наличие mount не означает открытый
+squelch), а из Prometheus-файла `rtl_airband`: backend сравнивает
+`channel_activity_counter` между обновлениями и отдаёт `level_dbfs`.
 
 HTTP по умолчанию слушает только loopback. Локальный `.env` задаёт
 `AIRMON_HOST` / `AIRMON_PORT` для `uvicorn` разработчика; на станции bind

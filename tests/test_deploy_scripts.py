@@ -24,7 +24,6 @@ def test_two_receivers_use_preferred_adsb_serial(tmp_path) -> None:
     assert _run_selector(tmp_path, "count") == "2"
     assert _run_selector(tmp_path, "adsb-device") == "1090"
     assert _run_selector(tmp_path, "vhf-available") == ""
-    assert _run_selector(tmp_path, "vhf-device") == "0118"
 
 
 def test_two_receivers_in_reverse_usb_order_keep_roles(tmp_path) -> None:

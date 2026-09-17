@@ -3,14 +3,50 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     AliasChoices,
+    BaseModel,
+    ConfigDict,
     Field,
+    HttpUrl,
     field_validator,
+    model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def vhf_mountpoint(frequency_mhz: float) -> str:
+    return f"vhf-{int(round(frequency_mhz * 1000)):06d}.mp3"
+
+
+SCAN_MOUNTPOINT = "vhf-scan.mp3"
+SCAN_STREAM_URL = f"http://127.0.0.1:8000/{SCAN_MOUNTPOINT}"
+
+
+class RadioChannel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    name: str
+    frequency_mhz: float = Field(ge=118.0, le=137.0)
+    stream_url: str = ""
+    mountpoint: str | None = None
+    status_url: str | None = None
+
+    @model_validator(mode="after")
+    def _fill_stream_defaults(self) -> RadioChannel:
+        mount = (self.mountpoint or "").strip()
+        if not mount and self.stream_url.strip():
+            mount = urlparse(self.stream_url).path.lstrip("/")
+        if not mount:
+            mount = vhf_mountpoint(self.frequency_mhz)
+        self.mountpoint = mount
+        if not self.stream_url.strip():
+            self.stream_url = f"http://127.0.0.1:8000/{mount}"
+        return self
 
 
 class Settings(BaseSettings):
@@ -85,6 +121,18 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("radio_channels_path", mode="before")
+    @classmethod
+    def blank_radio_channels_path_to_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    radio_channels_path: Path | None = None
+    radio_channels_json: str = "[]"
+    radio_stats_path: Path | None = Path("/run/rtl-airband/stats.prom")
     radio_auto_detect: bool = True
     radio_min_rtl_receivers: int = Field(default=2, ge=1, le=16)
     radio_receiver_serial: str = Field(
@@ -103,22 +151,32 @@ class Settings(BaseSettings):
         ),
     )
     usb_sysfs_path: Path = Path("/sys/bus/usb/devices")
-    acars_udp_host: str = "127.0.0.1"
-    acars_udp_port: int = Field(default=5550, ge=1, le=65535)
-    acars_log_size: int = Field(default=500, ge=10, le=20000)
-    acars_frequencies_mhz: list[float] = Field(
-        default_factory=lambda: [131.525, 131.550, 131.725, 131.825]
-    )
+    icecast_status_url: HttpUrl | None = None
+    radio_icecast_host: str = "127.0.0.1"
+    radio_icecast_port: int = Field(default=8000, ge=1, le=65535)
 
-    @field_validator("acars_frequencies_mhz", mode="before")
-    @classmethod
-    def _acars_frequencies(cls, value: object) -> object:
-        if value is None or value == "":
-            return [131.525, 131.550, 131.725, 131.825]
-        if isinstance(value, str):
-            parts = [item.strip() for item in value.replace(",", " ").split() if item.strip()]
-            return [float(item) for item in parts]
+    @property
+    def radio_channels(self) -> list[RadioChannel]:
+        channels = [RadioChannel.model_validate(item) for item in self._radio_json()]
+        return with_scan_stream(channels)
+
+    def _radio_json(self) -> list[dict[str, object]]:
+        import json
+
+        if self.radio_channels_path is not None and self.radio_channels_path.is_file():
+            value = json.loads(self.radio_channels_path.read_text(encoding="utf-8"))
+        else:
+            value = json.loads(self.radio_channels_json)
+        if not isinstance(value, list):
+            raise ValueError("radio channel list must contain a JSON array")
         return value
+
+
+def with_scan_stream(channels: list[RadioChannel]) -> list[RadioChannel]:
+    for channel in channels:
+        channel.mountpoint = SCAN_MOUNTPOINT
+        channel.stream_url = SCAN_STREAM_URL
+    return channels
 
 
 @lru_cache

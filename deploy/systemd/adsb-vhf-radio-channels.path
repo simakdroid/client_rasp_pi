@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch VHF channel list and reload RTL-Airband
+After=local-fs.target
+
+[Path]
+PathChanged=/var/lib/adsb-vhf/radio-channels.json
+PathModified=/var/lib/adsb-vhf/radio-channels.json
+Unit=adsb-vhf-radio-reload.service
+
+[Install]
+WantedBy=multi-user.target

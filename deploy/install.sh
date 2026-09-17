@@ -29,8 +29,8 @@ install -d -m0755 -o root -g root /etc/adsb-vhf
 if [ ! -e /etc/adsb-vhf/sdr.env ]; then
   install -m0644 -o root -g root "$DEPLOY_DIR/env/sdr.env.example" /etc/adsb-vhf/sdr.env
 fi
-if [ ! -e /etc/adsb-vhf/acarsdec.env ]; then
-  install -m0640 -o root -g rtl-airband "$DEPLOY_DIR/env/acarsdec.env.example" /etc/adsb-vhf/acarsdec.env
+if [ ! -e /etc/adsb-vhf/rtl-airband.env ]; then
+  install -m0640 -o root -g rtl-airband "$DEPLOY_DIR/env/rtl-airband.env.example" /etc/adsb-vhf/rtl-airband.env
 fi
 if [ ! -e /etc/adsb-vhf/backend.env ]; then
   install -m0640 -o root -g adsb-vhf "$DEPLOY_DIR/env/backend.env.example" /etc/adsb-vhf/backend.env
@@ -38,16 +38,19 @@ fi
 if [ ! -e /etc/default/readsb-adsb ]; then
   install -Dm0644 "$DEPLOY_DIR/readsb/readsb.default" /etc/default/readsb-adsb
 fi
+install -Dm0644 "$DEPLOY_DIR/radio-channels.json" /etc/adsb-vhf/radio-channels.json
 install -Dm0644 "$DEPLOY_DIR/systemd/readsb-adsb.service" /etc/systemd/system/readsb-adsb.service
-install -Dm0644 "$DEPLOY_DIR/systemd/acarsdec.service" /etc/systemd/system/acarsdec.service
+install -Dm0644 "$DEPLOY_DIR/systemd/rtl-airband.service" /etc/systemd/system/rtl-airband.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-backend.service" /etc/systemd/system/adsb-vhf-backend.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-rtl-hotplug.service" /etc/systemd/system/adsb-vhf-rtl-hotplug.service
+install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-radio-channels.path" /etc/systemd/system/adsb-vhf-radio-channels.path
+install -Dm0644 "$DEPLOY_DIR/systemd/adsb-vhf-radio-reload.service" /etc/systemd/system/adsb-vhf-radio-reload.service
 install -Dm0644 "$DEPLOY_DIR/systemd/adsb-kiosk.service" /etc/systemd/user/adsb-kiosk.service
 install -Dm0755 "$DEPLOY_DIR/chromium/start-kiosk.sh" /usr/local/lib/adsb-vhf/start-kiosk.sh
 install -Dm0755 "$DEPLOY_DIR/scripts/rtl-device-mode.sh" /usr/local/lib/adsb-vhf/rtl-device-mode.sh
 install -Dm0755 "$DEPLOY_DIR/scripts/rtl-hotplug.sh" /usr/local/lib/adsb-vhf/rtl-hotplug.sh
 install -Dm0755 "$DEPLOY_DIR/scripts/start-readsb.sh" /usr/local/lib/adsb-vhf/start-readsb.sh
-install -Dm0755 "$DEPLOY_DIR/scripts/start-acarsdec.sh" /usr/local/lib/adsb-vhf/start-acarsdec.sh
+install -Dm0755 "$DEPLOY_DIR/scripts/render-rtl-airband-conf.sh" /usr/local/lib/adsb-vhf/render-rtl-airband-conf.sh
 
 # Deploy the Python package and static assets without copying local venv/cache files.
 install -d -m0755 -o root -g adsb-vhf /opt/adsb-vhf
@@ -90,18 +93,20 @@ ensure_backend_writable_file() {
 }
 ensure_backend_writable_file AIRMON_COVERAGE_PATH /var/lib/adsb-vhf/coverage-rose.json
 ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH /var/lib/adsb-vhf/aircraft-types.json
+ensure_backend_writable_file AIRMON_RADIO_CHANNELS_PATH /var/lib/adsb-vhf/radio-channels.json
+if [ -f /etc/adsb-vhf/backend.env ]; then
+  sed -i -E 's|^AIRMON_RADIO_CHANNELS_PATH=.*|AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json|' \
+    /etc/adsb-vhf/backend.env
+fi
 
-systemctl disable --now adsb-vhf-radio-channels.path rtl-airband.service >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/adsb-vhf-radio-channels.path \
-  /etc/systemd/system/adsb-vhf-radio-reload.service \
-  /etc/systemd/system/rtl-airband.service
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb
 systemctl daemon-reload
+systemctl enable --now adsb-vhf-radio-channels.path
 
 # On upgrades, immediately load the new launcher, udev policy and backend code.
-for service in readsb-adsb.service acarsdec.service adsb-vhf-backend.service; do
+for service in readsb-adsb.service rtl-airband.service adsb-vhf-backend.service; do
   if systemctl is-active --quiet "$service"; then
     systemctl restart "$service"
   fi
@@ -112,10 +117,10 @@ if [ -x /usr/bin/readsb ]; then
 else
   echo "readsb is not installed; follow docs/raspberry-pi-setup.md." >&2
 fi
-if [ -x /usr/bin/acarsdec ]; then
-  echo "Optional acarsdec found; ACARS starts when the second dongle (serial 0118) is present."
+if [ -x /usr/bin/rtl_airband ]; then
+  echo "Optional rtl_airband found; VHF mode can be enabled with a second dongle."
 else
-  echo "Optional acarsdec is not installed; single-dongle ADS-B mode is unaffected."
+  echo "Optional rtl_airband is not installed; single-dongle ADS-B mode is unaffected."
 fi
 
 if id "$DESKTOP_USER" >/dev/null 2>&1; then

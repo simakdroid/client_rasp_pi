@@ -9,12 +9,11 @@ from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
-from .acars import AcarsLog, ingest_acars_udp
 from .adsb import AdsbSource, ReadsbJsonSource, SbsSource
 from .aircraft_types import AircraftTypeCatalog
 from .auth import log_insecure_admin_config, require_admin, websocket_origin_allowed
@@ -22,8 +21,9 @@ from .broadcast import BroadcastHub, ClientLimitError
 from .config import Settings, get_settings
 from .diagnostics import collect_diagnostics, read_adsb_status, read_host_status
 from .gis import LayerManager, UnsupportedTileFormatError, tile_http_metadata
-from .models import AircraftTypeInput
-from .radio import RadioMonitor
+from .models import AircraftTypeInput, RadioChannelInput, RadioSquelchInput
+from .radio import IcecastStreamError, RadioMonitor, open_icecast_audio, probe_icecast_audio
+from .radio_channels import RadioChannelCatalog
 from .raw_messages import RawMessageLog, ingest_raw_messages
 from .runtime import RuntimeStatus, run_supervised
 from .sessions import SessionRecorder, SessionReplayInput
@@ -55,8 +55,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_clients=settings.websocket_max_clients,
     )
     raw_messages = RawMessageLog(settings.raw_log_size)
-    acars = AcarsLog(settings.acars_log_size)
+    channel_catalog = RadioChannelCatalog(
+        settings.radio_channels_path,
+        settings.radio_channels_json,
+    )
     radio = RadioMonitor(
+        channel_catalog.channels(),
+        settings.radio_stats_path,
         auto_detect=settings.radio_auto_detect,
         min_receivers=settings.radio_min_rtl_receivers,
         receiver_serial=settings.radio_receiver_serial,
@@ -93,17 +98,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             asyncio.create_task(
                 run_supervised(
-                    "acars-ingest",
-                    lambda: ingest_acars_udp(
-                        settings.acars_udp_host, settings.acars_udp_port, acars
-                    ),
-                    runtime,
-                    fatal=False,
-                ),
-                name="acars-ingest",
-            ),
-            asyncio.create_task(
-                run_supervised(
                     "ws-broadcast",
                     lambda: _broadcast_loop(tracker, hub, settings.websocket_interval_s),
                     runtime,
@@ -133,7 +127,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tracker = tracker
     app.state.hub = hub
     app.state.raw_messages = raw_messages
-    app.state.acars = acars
     app.state.type_catalog = type_catalog
     app.state.runtime = runtime
     app.state.source = source
@@ -158,10 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         host = await asyncio.to_thread(read_host_status, settings.coverage_path.parent)
         positions = await tracker.position_stats()
         roles = radio.role_snapshot(settings.adsb_preferred_serial)
-        acars_stats = await acars.stats()
-        vhf_ready = (
-            roles["vhf_available"] if settings.radio_auto_detect else True
-        )
+        quality = await radio.quality_snapshot()
         return {
             "health": health,
             "coverage": coverage,
@@ -172,10 +162,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 **roles,
                 "receiver_serial": settings.radio_receiver_serial,
                 "preferred_adsb_serial": settings.adsb_preferred_serial,
-                "enabled": vhf_ready,
-                "frequencies_mhz": list(settings.acars_frequencies_mhz),
-                "last_at": acars_stats["last_at"],
-                "count": acars_stats["count"],
+                "enabled": roles["vhf_available"]
+                if settings.radio_auto_detect
+                else bool(channel_catalog.channels()),
+                "squelch_snr_db": channel_catalog.squelch_snr_db(),
+                "active_channels": sum(1 for item in quality if item.get("active") is True),
+                "channels": quality,
             },
             "session": recorder.status(),
         }
@@ -314,10 +306,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "radio": {
                 "enabled": await asyncio.to_thread(radio.hardware_available)
                 if settings.radio_auto_detect
-                else True
-            },
-            "acars": {
-                "frequencies_mhz": list(settings.acars_frequencies_mhz),
+                else bool(channel_catalog.channels())
             },
             "admin_required": bool(settings.admin_token),
             "track_max_points": settings.track_max_points,
@@ -410,24 +399,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def clear_adsb_raw_messages() -> dict[str, object]:
         return await raw_messages.clear()
 
-    @app.get("/api/acars")
-    async def acars_messages(
-        after_id: int = Query(default=0, ge=0),
-        before_id: int = Query(default=0, ge=0),
-        limit: int = Query(default=100, ge=1, le=500),
-        newest_first: bool = Query(default=False),
-    ) -> dict[str, object]:
-        return await acars.recent(
-            after_id=after_id,
-            before_id=before_id,
-            limit=limit,
-            newest_first=newest_first,
-        )
-
-    @app.post("/api/acars/clear", dependencies=[Depends(require_admin)])
-    async def clear_acars_messages() -> dict[str, object]:
-        return await acars.clear()
-
     @app.get("/api/layers")
     async def layer_list() -> dict[str, object]:
         return layers.catalog_payload()
@@ -480,6 +451,135 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type=media_type,
             headers={**cache_headers, **encoding_headers},
         )
+
+    @app.get("/api/radio/channels")
+    async def radio_channels(request: Request) -> list[dict[str, object]]:
+        channels = await radio.status()
+        stream_url = _public_stream_url(request)
+        for item in channels:
+            item["stream_url"] = stream_url
+        return channels
+
+    def _public_stream_url(request: Request) -> str:
+        return str(request.base_url).rstrip("/") + "/api/radio/stream"
+
+    def _rewrite_config_channels(request: Request) -> list[dict[str, object]]:
+        stream_url = _public_stream_url(request)
+        items = channel_catalog.public_list()
+        for item in items:
+            item["stream_url"] = stream_url
+        return items
+
+    def _radio_stream_headers() -> dict[str, str]:
+        # Fake length turns off HTTP/1.1 chunked encoding; Chromium's MP3
+        # demuxer often fails on chunked live streams with MEDIA_ERR_DECODE.
+        return {
+            "Cache-Control": "no-cache, no-store",
+            "Pragma": "no-cache",
+            "Accept-Ranges": "none",
+            "X-Accel-Buffering": "no",
+            "Content-Length": "2147483647",
+        }
+
+    @app.get("/api/radio/stream-status")
+    async def radio_stream_status() -> dict[str, object]:
+        try:
+            content_type = await probe_icecast_audio(
+                host=settings.radio_icecast_host,
+                port=settings.radio_icecast_port,
+            )
+        except IcecastStreamError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return {"ok": True, "content_type": content_type}
+
+    @app.head("/api/radio/stream")
+    async def radio_stream_head() -> Response:
+        try:
+            content_type = await probe_icecast_audio(
+                host=settings.radio_icecast_host,
+                port=settings.radio_icecast_port,
+            )
+        except IcecastStreamError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return Response(
+            status_code=200,
+            media_type=content_type or "audio/mpeg",
+            headers=_radio_stream_headers(),
+        )
+
+    @app.get("/api/radio/stream")
+    async def radio_stream() -> StreamingResponse:
+        try:
+            reader, writer, leftover, content_type = await open_icecast_audio(
+                host=settings.radio_icecast_host,
+                port=settings.radio_icecast_port,
+            )
+        except IcecastStreamError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+        async def body() -> AsyncIterator[bytes]:
+            try:
+                if leftover:
+                    yield leftover
+                while True:
+                    chunk = await reader.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+
+        return StreamingResponse(
+            body(),
+            media_type=content_type or "audio/mpeg",
+            headers=_radio_stream_headers(),
+        )
+
+    def _radio_config_payload(request: Request) -> dict[str, object]:
+        return {
+            "channels": _rewrite_config_channels(request),
+            "squelch_snr_db": channel_catalog.squelch_snr_db(),
+        }
+
+    @app.get("/api/radio/config")
+    async def radio_config(request: Request) -> dict[str, object]:
+        return _radio_config_payload(request)
+
+    @app.put("/api/radio/config", dependencies=[Depends(require_admin)])
+    async def update_radio_settings(body: RadioSquelchInput, request: Request) -> dict[str, object]:
+        try:
+            await asyncio.to_thread(channel_catalog.set_squelch_snr_db, body.squelch_snr_db)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _radio_config_payload(request)
+
+    @app.post("/api/radio/config", dependencies=[Depends(require_admin)])
+    async def add_radio_channel(body: RadioChannelInput, request: Request) -> dict[str, object]:
+        try:
+            await asyncio.to_thread(channel_catalog.upsert, body.name, body.frequency_mhz)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        radio.channels = channel_catalog.channels()
+        return _radio_config_payload(request)
+
+    @app.delete("/api/radio/config/{channel_id}", dependencies=[Depends(require_admin)])
+    async def delete_radio_channel(channel_id: str, request: Request) -> dict[str, object]:
+        try:
+            deleted = await asyncio.to_thread(channel_catalog.delete, channel_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Radio channel not found")
+        radio.channels = channel_catalog.channels()
+        return _radio_config_payload(request)
 
     @app.websocket("/ws/aircraft")
     async def aircraft_socket(websocket: WebSocket) -> None:

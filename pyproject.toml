@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "raspi-air-monitor"
-version = "2.4.0"
-description = "Local ADS-B, ACARS and GIS monitor for Raspberry Pi 5"
+version = "2.3.1"
+description = "Local ADS-B, VHF and GIS monitor for Raspberry Pi 5"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

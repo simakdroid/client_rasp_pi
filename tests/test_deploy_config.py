@@ -1,6 +1,11 @@
+import json
+from importlib.resources import files
 from pathlib import Path
 
+from app.rtl_airband_conf import load_channels_json, render_conf
+
 ROOT = Path(__file__).resolve().parents[1]
+CATALOG_PATH = ROOT / "deploy" / "radio-channels.json"
 
 
 def _env_value(path: Path, key: str) -> str:
@@ -14,20 +19,42 @@ def _env_value(path: Path, key: str) -> str:
     raise AssertionError(f"{key} missing in {path}")
 
 
-def test_acars_env_matches_backend_and_decoder() -> None:
-    backend = (ROOT / "deploy" / "env" / "backend.env.example").read_text(encoding="utf-8")
-    example = (ROOT / ".env.example").read_text(encoding="utf-8")
-    acars = (ROOT / "deploy" / "env" / "acarsdec.env.example").read_text(encoding="utf-8")
-    start = (ROOT / "deploy" / "scripts" / "start-acarsdec.sh").read_text(encoding="utf-8")
-    assert "AIRMON_ACARS_UDP_PORT=5550" in backend
-    assert "AIRMON_ACARS_FREQUENCIES_MHZ=131.525 131.550 131.725 131.825" in backend
-    assert "AIRMON_RADIO_CHANNELS_JSON" not in backend
-    assert "AIRMON_ACARS_UDP_PORT=5550" in example
-    assert "ACARS_UDP_PORT=5550" in acars
-    assert "131.525 131.550 131.725 131.825" in acars
-    assert "acarsdec -N" in start.replace("\n", " ") or '-N "${host}:${port}"' in start
-    env_path = ROOT / "deploy" / "env" / "backend.env.example"
-    assert _env_value(env_path, "AIRMON_RADIO_RECEIVER_SERIAL") == "0118"
+def _channel_catalog() -> list[dict[str, object]]:
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    assert isinstance(catalog, list) and catalog
+    return catalog
+
+
+def test_radio_channel_catalog_matches_env_and_rtl_airband() -> None:
+    catalog = _channel_catalog()
+    by_id = {item["id"]: item for item in catalog}
+    assert set(by_id) == {"tower", "ground", "approach"}
+
+    freqs = [float(item["frequency_mhz"]) for item in catalog]
+    assert freqs == [118.1, 118.5, 119.1]
+    for item in catalog:
+        frequency = float(item["frequency_mhz"])
+        expected_mount = f"vhf-{int(round(frequency * 1000)):06d}.mp3"
+        assert item["mountpoint"] == expected_mount
+        assert str(item["stream_url"]).endswith("/" + expected_mount)
+
+    example_json = load_channels_json(backend_env=ROOT / "deploy" / "env" / "backend.env.example")
+    example = json.loads(example_json)
+    assert [(item["id"], float(item["frequency_mhz"])) for item in example] == [
+        (item["id"], float(item["frequency_mhz"])) for item in catalog
+    ]
+    generated = render_conf(channels_json=example_json, icecast_password="x")
+    assert 'mode = "scan";' in generated
+    assert 'mountpoint = "vhf-scan.mp3";' in generated
+    assert f"freqs = ( {', '.join(f'{freq:.3f}' for freq in freqs)} );" in generated
+
+    channels = json.loads(_env_value(ROOT / ".env.example", "AIRMON_RADIO_CHANNELS_JSON"))
+    assert [(item["id"], item["frequency_mhz"], item["stream_url"]) for item in channels] == [
+        (item["id"], item["frequency_mhz"], item["stream_url"]) for item in catalog
+    ]
+    backend_env = (ROOT / "deploy" / "env" / "backend.env.example").read_text(encoding="utf-8")
+    assert "AIRMON_RADIO_CHANNELS_JSON=" in backend_env
+    assert "AIRMON_RADIO_CHANNELS_PATH=" not in backend_env
 
 
 def test_sdr_env_is_the_serial_source() -> None:
@@ -62,12 +89,18 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "sdr.env" in readsb
     assert "ExecCondition=" in readsb
 
-    acars = (ROOT / "deploy" / "systemd" / "acarsdec.service").read_text(encoding="utf-8")
-    assert "SupplementaryGroups=rtl-sdr" in acars
-    assert "start-acarsdec.sh" in acars
-    assert "vhf-available" in acars
-    assert "StartLimitIntervalSec=0" in acars
-    assert "Conflicts=rtl-airband.service" in acars
+    radio = (ROOT / "deploy" / "systemd" / "rtl-airband.service").read_text(encoding="utf-8")
+    assert "SupplementaryGroups=rtl-sdr" in radio
+    assert "render-rtl-airband-conf.sh" in radio
+    assert "ExecStartPre=+" in radio
+    assert "AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json" in radio
+    assert "${ICECAST_PORT}" not in radio
+    assert "StartLimitIntervalSec=0" in radio
+    render = (ROOT / "deploy" / "scripts" / "render-rtl-airband-conf.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "app.rtl_airband_conf" in render
+    assert "envsubst" not in render
 
     backend = (ROOT / "deploy" / "systemd" / "adsb-vhf-backend.service").read_text(encoding="utf-8")
     assert "BACKEND_HOST" in backend
@@ -76,22 +109,19 @@ def test_udev_and_units_use_rtl_sdr_hotplug() -> None:
     assert "/opt/adsb-vhf/data/layers" in backend
     assert "AIRMON_AIRCRAFT_TYPES_PATH=/var/lib/adsb-vhf/aircraft-types.json" in backend
     assert "AIRMON_COVERAGE_PATH=/var/lib/adsb-vhf/coverage-rose.json" in backend
-    assert "AIRMON_RADIO_CHANNELS_PATH" not in backend
+    assert "AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json" in backend
 
     install = (ROOT / "deploy" / "install.sh").read_text(encoding="utf-8")
     assert "rtl-sdr" in install
     assert "rtl-hotplug.sh" in install
-    assert "start-acarsdec.sh" in install
-    assert "acarsdec.service" in install
-    assert "render-rtl-airband-conf.sh" not in install
+    assert "render-rtl-airband-conf.sh" in install
     assert "sdr.env" in install
     assert "/var/lib/adsb-vhf" in install
     assert "/opt/air-monitor" not in install
     assert "ensure_backend_writable_file AIRMON_AIRCRAFT_TYPES_PATH" in install
     assert "ensure_backend_writable_file AIRMON_COVERAGE_PATH" in install
-    assert "AIRMON_RADIO_CHANNELS_PATH" not in install
+    assert "AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json" in install
     assert "adsb-vhf-radio-channels.path" in install
-    assert "disable --now adsb-vhf-radio-channels.path" in install
 
 
 def test_kiosk_fails_if_backend_never_answers() -> None:
@@ -108,8 +138,6 @@ def test_kiosk_fails_if_backend_never_answers() -> None:
 
 
 def test_wheel_package_includes_frontend_assets() -> None:
-    from importlib.resources import files
-
     static = files("app") / "static"
     for relative in (
         "index.html",

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "tower",
+    "name": "Вышка",
+    "frequency_mhz": 118.1,
+    "stream_url": "http://127.0.0.1:8000/vhf-118100.mp3",
+    "mountpoint": "vhf-118100.mp3"
+  },
+  {
+    "id": "ground",
+    "name": "Земля",
+    "frequency_mhz": 118.5,
+    "stream_url": "http://127.0.0.1:8000/vhf-118500.mp3",
+    "mountpoint": "vhf-118500.mp3"
+  },
+  {
+    "id": "approach",
+    "name": "Подход",
+    "frequency_mhz": 119.1,
+    "stream_url": "http://127.0.0.1:8000/vhf-119100.mp3",
+    "mountpoint": "vhf-119100.mp3"
+  }
+]

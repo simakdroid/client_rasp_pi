@@ -1,0 +1,34 @@
+[Unit]
+Description=RTL-Airband VHF AM receiver
+Documentation=https://github.com/rtl-airband/RTLSDR-Airband
+After=network-online.target
+Wants=network-online.target
+Conflicts=rtl-airband-rs.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=rtl-airband
+Group=rtl-airband
+SupplementaryGroups=rtl-sdr
+EnvironmentFile=-/etc/adsb-vhf/sdr.env
+EnvironmentFile=/etc/adsb-vhf/rtl-airband.env
+Environment=AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json
+# 0027: stats.prom stays group-readable; the rendered config is chmod 0600 in the script.
+UMask=0027
+RuntimeDirectory=rtl-airband
+RuntimeDirectoryMode=0750
+ExecCondition=/usr/local/lib/adsb-vhf/rtl-device-mode.sh vhf-available
+# '+' so the renderer can read /etc/adsb-vhf/backend.env (0640 root:adsb-vhf).
+ExecStartPre=+/usr/local/lib/adsb-vhf/render-rtl-airband-conf.sh
+ExecStart=/usr/bin/rtl_airband -F -e -c /run/rtl-airband/rtl_airband.conf
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/rtl-airband
+
+[Install]
+WantedBy=multi-user.target

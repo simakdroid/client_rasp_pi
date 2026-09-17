@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from app.adsb import ReadsbJsonSource, SbsSource, parse_readsb_aircraft, parse_sbs_line
 from app.aircraft_types import AircraftTypeCatalog
 from app.broadcast import BroadcastHub
-from app.config import Settings
+from app.config import RadioChannel, Settings
 from app.diagnostics import collect_diagnostics
 from app.gis import LayerManager
 from app.main import create_app
@@ -596,7 +596,13 @@ def test_sdr_roles_follow_serials_not_plug_order(tmp_path) -> None:
         (device / "idVendor").write_text("0bda\n", encoding="ascii")
         (device / "idProduct").write_text("2838\n", encoding="ascii")
         (device / "serial").write_text(f"{serial}\n", encoding="ascii")
-    monitor = RadioMonitor(auto_detect=True, sysfs_path=tmp_path)
+    channel = RadioChannel(
+        id="tower",
+        name="Tower",
+        frequency_mhz=118.1,
+        stream_url="http://127.0.0.1:8000/tower",
+    )
+    monitor = RadioMonitor([channel], auto_detect=True, sysfs_path=tmp_path)
     assert sorted(monitor.connected_serials()) == ["0118", "1090"]
     assert monitor.hardware_available() is True
 
@@ -613,36 +619,83 @@ def test_duplicate_serials_are_detected(tmp_path) -> None:
     (extra / "idVendor").write_text("0bda\n", encoding="ascii")
     (extra / "idProduct").write_text("2838\n", encoding="ascii")
     (extra / "serial").write_text("1090\n", encoding="ascii")
-    monitor = RadioMonitor(auto_detect=True, sysfs_path=tmp_path)
+    monitor = RadioMonitor(
+        [
+            RadioChannel(
+                id="tower",
+                name="Tower",
+                frequency_mhz=118.1,
+                stream_url="http://127.0.0.1:8000/tower",
+            )
+        ],
+        auto_detect=True,
+        sysfs_path=tmp_path,
+    )
     assert monitor.hardware_available() is False
     assert monitor.connected_serials().count("0118") == 2
 
 
-def test_backend_does_not_keep_icecast_or_radio_channel_files() -> None:
+@pytest.mark.asyncio
+async def test_backend_reads_metrics_but_not_icecast_password(tmp_path) -> None:
+    (tmp_path / "rtl_airband.conf").write_text(
+        'password = "SUPERSECRET";\n', encoding="utf-8"
+    )
+    stats = tmp_path / "stats.prom"
+    stats.write_text(
+        'channel_activity_counter{freq="118.100",label="Tower"}\t3\n'
+        'channel_activity_counter{freq="118.100",label="Tower"}\t4\n',
+        encoding="utf-8",
+    )
+    channel = RadioChannel(
+        id="tower",
+        name="Tower",
+        frequency_mhz=118.1,
+        stream_url="http://user:pass@127.0.0.1:8000/vhf.mp3",
+    )
+    monitor = RadioMonitor([channel], stats_path=stats, auto_detect=False)
+    first = await monitor.status()
+    stats.write_text(
+        'channel_activity_counter{freq="118.100",label="Tower"}\t5\n',
+        encoding="utf-8",
+    )
+    second = await monitor.status()
+    blob = json.dumps(second)
+    assert "SUPERSECRET" not in blob
+    assert "user:pass" in blob  # channel config still has URL; diagnostics must not
+    assert second[0]["active"] is True
     payload = collect_diagnostics(
-        settings=Settings(_env_file=None),
+        settings=Settings(
+            radio_channels_json=json.dumps(
+                [
+                    {
+                        "id": "tower",
+                        "name": "Вышка",
+                        "frequency_mhz": 118.1,
+                        "stream_url": "http://user:pass@127.0.0.1:8000/vhf.mp3",
+                    }
+                ]
+            )
+        ),
         health={"status": "ok", "live": True, "ready": True, "source_mode": "json"},
         gis={"version": 1, "last_good_version": 1, "load_ms": 1, "errors": []},
         coverage={"saved": True, "load_error": None, "save_error": None},
         host={},
     )
     dumped = json.dumps(payload)
-    assert "stream_url" not in dumped
+    assert "SUPERSECRET" not in dumped
     assert "user:pass" not in dumped
-    unit = (ROOT / "deploy" / "systemd" / "acarsdec.service").read_text(encoding="utf-8")
-    start = (ROOT / "deploy" / "scripts" / "start-acarsdec.sh").read_text(encoding="utf-8")
+    assert "stream_url" not in dumped
+    unit = (ROOT / "deploy" / "systemd" / "rtl-airband.service").read_text(encoding="utf-8")
+    render = (ROOT / "app" / "rtl_airband_conf.py").read_text(encoding="utf-8")
     backend = (ROOT / "deploy" / "systemd" / "adsb-vhf-backend.service").read_text(
         encoding="utf-8"
     )
-    assert "acarsdec" in unit
-    assert "vhf-available" in unit
-    assert "start-acarsdec.sh" in unit
-    assert "-N " in start
-    assert "AIRMON_RADIO_CHANNELS_PATH" not in backend
+    assert "chmod(0o600)" in render
+    assert "render-rtl-airband-conf.sh" in unit
+    assert "ExecStartPre=+" in unit
+    assert "stats.prom" in unit
     assert "rtl_airband.conf" not in backend
-    assert not (ROOT / "app" / "rtl_airband_conf.py").exists()
-    assert "loadAcarsMessages" in FRONTEND
-    assert "/api/radio/stream" not in FRONTEND
+    assert first[0]["id"] == "tower"
 
 
 def test_chromium_before_backend_recovers_interface() -> None:

@@ -1,16 +1,18 @@
 [Unit]
-Description=ADS-B and ACARS application backend
-After=network.target readsb-adsb.service acarsdec.service
+Description=ADS-B and VHF application backend
+After=network.target readsb-adsb.service rtl-airband.service
 Wants=readsb-adsb.service
 
 [Service]
 Type=simple
 User=adsb-vhf
 Group=adsb-vhf
+SupplementaryGroups=rtl-airband
 WorkingDirectory=/opt/adsb-vhf
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=AIRMON_COVERAGE_PATH=/var/lib/adsb-vhf/coverage-rose.json
 Environment=AIRMON_AIRCRAFT_TYPES_PATH=/var/lib/adsb-vhf/aircraft-types.json
+Environment=AIRMON_RADIO_CHANNELS_PATH=/var/lib/adsb-vhf/radio-channels.json
 EnvironmentFile=-/etc/adsb-vhf/sdr.env
 EnvironmentFile=/etc/adsb-vhf/backend.env
 StateDirectory=adsb-vhf

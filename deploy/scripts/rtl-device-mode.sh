@@ -7,7 +7,7 @@ VHF_SERIAL=${VHF_SERIAL:-0118}
 
 # USB iSerial and librtlsdr EEPROM serial are not the same string until
 # rtl_eeprom -s has been written and the dongle replugged. readsb --device
-# and acarsdec -r match the SN: line from rtl_test -t. With one
+# and rtl_airband serial= match the SN: line from rtl_test -t. With one
 # dongle always use index 0; with two or more use the preferred EEPROM serial.
 
 list_rtl_devices() {
@@ -75,20 +75,11 @@ case "${1:-}" in
     has_serial "$VHF_SERIAL" || exit 1
     has_serial "$PREFERRED_ADSB_SERIAL"
     ;;
-  vhf-device)
-    if [ "$count" -gt 1 ] && [ "$PREFERRED_ADSB_SERIAL" != "$VHF_SERIAL" ] \
-        && has_serial "$PREFERRED_ADSB_SERIAL" && has_serial "$VHF_SERIAL"; then
-      printf '%s\n' "$VHF_SERIAL"
-      exit 0
-    fi
-    echo "No unambiguous VHF RTL-SDR found (count=$count, vhf=$VHF_SERIAL)" >&2
-    exit 1
-    ;;
   count)
     printf '%s\n' "$count"
     ;;
   *)
-    echo "Usage: $0 {adsb-device|adsb-serial|vhf-available|vhf-device|count}" >&2
+    echo "Usage: $0 {adsb-device|adsb-serial|vhf-available|count}" >&2
     exit 2
     ;;
 esac
