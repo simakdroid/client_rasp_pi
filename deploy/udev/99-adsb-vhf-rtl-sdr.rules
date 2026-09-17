@@ -2,7 +2,7 @@
 # assign roles when two dongles are present. A blank serial must still get
 # rtl-sdr group access, otherwise a single unprogrammed stick cannot be opened.
 # Add/remove of any Realtek RTL2832U runs adsb-vhf-rtl-hotplug.service, which
-# restarts readsb (index 0 vs serial 1090) and starts/stops rtl-airband.
+# restarts readsb (index 0 vs serial 1090) and starts/stops acarsdec.
 # VID/PID stay 0bda + 2832|2838. USB iSerial after rtl_eeprom -s must match
 # the SN: line printed by rtl_test -t.
 SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2832", ACTION=="add", MODE="0660", GROUP="rtl-sdr", TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsb-vhf-rtl-hotplug.service"

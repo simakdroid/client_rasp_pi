@@ -1,29 +1,29 @@
-# Raspberry Pi OS Bookworm 64-bit: ADS-B + VHF
+# Raspberry Pi OS Bookworm 64-bit: ADS-B + ACARS
 
 Конфигурация рассчитана на Raspberry Pi OS Bookworm 64-bit и два RTL2832U.
 Единственный каталог приложения на станции — `/opt/adsb-vhf` (не `/opt/air-monitor`).
 
 - ADS-B 1090 МГц — EEPROM serial `1090`;
-- авиационный VHF AM — EEPROM serial `0118`.
+- ACARS VHF — EEPROM serial `0118`.
 
 Serial задаются в `/etc/adsb-vhf/sdr.env` (`deploy/env/sdr.env.example`) и
-подхватываются `readsb`, `rtl_airband` и backend. Не дублируйте их в
+подхватываются `readsb`, `acarsdec` и backend. Не дублируйте их в
 `/etc/default/readsb-adsb`.
 
 Если подключён только один RTL‑SDR, launcher открывает индекс `0` даже при
-пустом EEPROM serial, отдаёт его `readsb`, а `rtl_airband` не запускается.
+пустом EEPROM serial, отдаёт его `readsb`, а `acarsdec` не запускается.
 Общие udev-правила дают группе `rtl-sdr` доступ к такому донглу. При двух
-устройствах роли снова фиксируются по serial: `1090` для ADS‑B и `0118` для VHF.
+устройствах роли снова фиксируются по serial: `1090` для ADS‑B и `0118` для ACARS.
 
 RTL-SDR открывается через `libusb`. Путь вида `/dev/bus/usb/…` меняется и не
 является корректным идентификатором для readsb. После `rtl_eeprom -s` строка
 USB iSerial должна совпасть с тем, что `rtl_test -t` печатает как `SN:` —
-именно этот serial используют `readsb --device` и `rtl_airband`. VID/PID
+именно этот serial используют `readsb --device` и `acarsdec -r`. VID/PID
 остаются `0bda` и `2832` или `2838`.
 
 Горячее подключение обрабатывает `adsb-vhf-rtl-hotplug.service`: `SYSTEMD_WANTS`
 сам по себе не перезапускает уже работающий readsb, поэтому oneshot заново
-выбирает индекс `0` или serial `1090` и включает/выключает `rtl-airband`.
+выбирает индекс `0` или serial `1090` и включает/выключает `acarsdec`.
 
 ## 1. Подготовка Raspberry Pi
 
@@ -32,18 +32,8 @@ sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y git build-essential cmake pkg-config \
   rtl-sdr librtlsdr-dev libusb-1.0-0-dev \
-  libconfig++-dev libfftw3-dev libmp3lame-dev libshout3-dev \
   chromium gettext-base python3-venv
 ```
-
-Если Icecast должен работать на этом же Raspberry Pi:
-
-```bash
-sudo apt install -y icecast2
-sudo systemctl enable --now icecast2
-```
-
-Пароли источника задаются в `/etc/icecast2/icecast.xml`. Не помещайте их в git.
 
 ## 2. Запись уникальных serial
 
@@ -69,20 +59,20 @@ rtl_test -t
 Для интерактивного `rtl_test` добавьте пользователя в группу `rtl-sdr`:
 `sudo usermod -aG rtl-sdr "$USER"`.
 
-## 3. Установка readsb и RTLSDR-Airband
+## 3. Установка readsb и acarsdec
 
 Скрипт развёртывания не устанавливает произвольные сторонние сборки. Сначала
 проверьте пакеты:
 
 ```bash
 apt-cache show readsb 2>/dev/null | head
-apt-cache show rtl-airband 2>/dev/null | head
+apt-cache show acarsdec 2>/dev/null | head
 ```
 
 Если пакет доступен из настроенного доверенного репозитория:
 
 ```bash
-sudo apt install readsb rtl-airband
+sudo apt install readsb acarsdec
 ```
 
 Иначе соберите из официальных исходников. Для readsb:
@@ -95,22 +85,22 @@ sudo install -m 0755 readsb /usr/bin/readsb
 cd ..
 ```
 
-Для RTLSDR-Airband:
+Для acarsdec:
 
 ```bash
-git clone https://github.com/rtl-airband/RTLSDR-Airband.git
-cd RTLSDR-Airband
+git clone https://github.com/TLeconte/acarsdec.git
+cd acarsdec
 mkdir build
 cd build
-cmake -DPLATFORM=native ..
+cmake .. -Drtl=ON
 make -j"$(nproc)"
-sudo install -m 0755 rtl_airband /usr/bin/rtl_airband
+sudo install -m 0755 acarsdec /usr/bin/acarsdec
 cd ../..
 ```
 
-На 64-битной ОС не выбирайте `PLATFORM=rpiv2`: этот вариант включает
-несовместимое VideoCore FFT. `native` использует FFTW и подходит для текущей
-машины; `generic` можно выбрать вместо него для переносимой сборки.
+Сборка без MQTT и libacars достаточна для UDP JSON (`-N host:port`).
+VDL2 (136.975) в этот тюнер не входит: частоты POA должны укладываться примерно
+в 2.4 МГц вокруг 131.5–131.8.
 
 Сборка readsb должна поддерживать RTL-SDR. Launcher передаёт выбранный serial в
 `--device`: для RTL-SDR это селектор EEPROM serial, а не путь устройства.
@@ -137,7 +127,7 @@ sudo reboot
 - покрытие и каталог типов пишет в `/var/lib/adsb-vhf` (systemd `StateDirectory`);
 - устанавливает unit-файлы и шаблоны конфигурации, включая `/etc/adsb-vhf/sdr.env`;
 - не перезаписывает уже созданные env-файлы с секретами и `/etc/default/readsb-adsb`;
-- не запускает сервисы до настройки координат, частот и паролей.
+- не запускает сервисы до настройки координат.
 
 `ReadWritePaths` каталоги не создаёт: `install.sh` делает `mkdir` для
 `/var/lib/adsb-vhf` и слоёв.
@@ -152,10 +142,10 @@ sudo reboot
 
 | Событие | Ожидание |
 | --- | --- |
-| Загрузка без донгла | `readsb-adsb` не стартует (`ExecCondition`), радио выключено |
+| Загрузка без донгла | `readsb-adsb` не стартует (`ExecCondition`), ACARS выключен |
 | Вставили один донгл | hotplug запускает readsb на индексе `0` |
-| Вставили второй (`1090`+`0118`) | readsb перезапускается на serial `1090`, стартует `rtl-airband` |
-| Вынули VHF | `rtl-airband` останавливается, ADS-B остаётся на единственном стике (`0`) |
+| Вставили второй (`1090`+`0118`) | readsb перезапускается на serial `1090`, стартует `acarsdec` |
+| Вынули VHF | `acarsdec` останавливается, ADS-B остаётся на единственном стике (`0`) |
 | Вынули оба | оба сервиса останавливаются |
 | Вставили снова после crash loop | `reset-failed` в hotplug; при необходимости `sudo systemctl reset-failed` |
 
@@ -191,69 +181,47 @@ ls -l /run/readsb/aircraft.json
 ss -ltn | grep 30005
 ```
 
-## 6. VHF AM и Icecast
+## 6. ACARS
 
-Каталог каналов задаёт оператор на вкладке «Радио» в приложении. Список
-хранится в `/var/lib/adsb-vhf/radio-channels.json`. Пока файла нет, берётся
-`AIRMON_RADIO_CHANNELS_JSON` из `backend.env`. rtl-airband работает в
-`mode = "scan"`: донгл перестраивается по списку, частоты могут быть далеко
-друг от друга. Icecast отдаёт один поток `vhf-scan.mp3`. После сохранения в UI
-path-unit перезапускает rtl-airband. Не больше 32 частот.
+Второй RTL (`0118`) принимает пакетный ACARS, не голос. Частоты по умолчанию —
+европейские POA 131.525 / 131.550 / 131.725 / 131.825 МГц; они укладываются
+в полосу одного тюнера (~2.4 МГц). Список задаётся в
+`/etc/adsb-vhf/acarsdec.env` (`ACARS_FREQUENCIES`) и дублируется для UI в
+`AIRMON_ACARS_FREQUENCIES_MHZ` в `backend.env`. Из интерфейса частоты не
+редактируются.
 
-Настройте секретный env-файл (пароли Icecast остаются здесь, `0600` у
-сгенерированного conf; backend читает только `stats.prom`):
-
-```bash
-sudo nano /etc/adsb-vhf/rtl-airband.env
-sudo chown root:rtl-airband /etc/adsb-vhf/rtl-airband.env
-sudo chmod 0640 /etc/adsb-vhf/rtl-airband.env
-```
-
-Пример находится в `deploy/env/rtl-airband.env.example`; реального пароля в
-репозитории нет. Для беспроблемной подстановки в libconfig используйте пароль
-из символов `A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, `-`. Кавычки и обратные слеши
-потребуют экранирования в шаблоне.
-
-После изменения частот или env:
+`acarsdec` шлёт JSON по UDP на `127.0.0.1:5550`. Backend слушает этот порт
+и показывает сообщения во вкладке ACARS. Голосовой эфир слушайте отдельным
+приёмником.
 
 ```bash
-sudo systemctl restart rtl-airband adsb-vhf-backend
-systemctl status rtl-airband.service
-journalctl -u rtl-airband.service -n 100 --no-pager
+sudo nano /etc/adsb-vhf/acarsdec.env
+sudo chown root:rtl-airband /etc/adsb-vhf/acarsdec.env
+sudo chmod 0640 /etc/adsb-vhf/acarsdec.env
 ```
 
-Unit перед каждым запуском вызывает `render-rtl-airband-conf.sh` от root
-(`ExecStartPre=+`): читает `AIRMON_RADIO_CHANNELS_JSON` из
-`/etc/adsb-vhf/backend.env` и Icecast-параметры из `rtl-airband.env`, затем
-пишет `/run/rtl-airband/rtl_airband.conf` с правами `0600`. Пароль не
-передаётся аргументом процесса и не попадает в environment rtl-airband из
-`backend.env` (там может быть `AIRMON_ADMIN_TOKEN`).
-`stats_filepath` обновляет Prometheus-файл примерно раз в 15 секунд; backend
-сравнивает `channel_activity_counter` и показывает активность squelch и
-текущий dBFS без выдачи UI системных прав.
-
-С телефона или другого ПК в LAN открывайте UI по имени хоста Pi, не по
-`127.0.0.1` на клиенте. Плеер берёт `GET /api/radio/stream` с того же origin,
-что и страница: бэкенд сам читает `http://127.0.0.1:8000/vhf-scan.mp3`.
-Icecast может слушать только localhost. Если страница по HTTPS, аудио тоже
-идёт по HTTPS через приложение.
-
-Проверка Icecast 2.5: `curl -sI` шлёт HEAD и получит `405 Method Not Allowed`
-(`Allow: GET, OPTIONS`). Нужен GET:
+Пример — `deploy/env/acarsdec.env.example`. После смены частот:
 
 ```bash
-curl -sS --max-time 2 -D - -o /dev/null http://127.0.0.1:8000/vhf-scan.mp3
-systemctl is-active icecast2 rtl-airband
+sudo systemctl restart acarsdec adsb-vhf-backend
+systemctl status acarsdec.service
+journalctl -u acarsdec.service -n 100 --no-pager
 ```
 
-Ожидается `HTTP/1.0 200` или `HTTP/1.1 200`. `404` — rtl-airband не залогинен
-как источник (часто `activating`). `405` на GET не должен появляться.
+Unit стартует только если `rtl-device-mode.sh vhf-available` успешен
+(есть оба serial `1090` и `0118`). Проверка:
+
+```bash
+systemctl is-active acarsdec
+ss -uln | grep 5550
+curl -sS 'http://127.0.0.1:8080/api/acars?limit=5'
+```
 
 ## 7. Backend
 
 `deploy/install.sh` копирует приложение в `/opt/adsb-vhf`, создаёт `.venv`,
 устанавливает production-зависимости и оставляет сервисы выключенными до
-настройки. Отредактируйте реальные координаты, пути и список Icecast-потоков:
+настройки. Отредактируйте реальные координаты и пути:
 
 ```bash
 sudo nano /etc/adsb-vhf/backend.env
@@ -290,8 +258,8 @@ journalctl -u adsb-vhf-backend.service -n 100 --no-pager
 cd ~/client_rasp_pi
 git pull
 sudo sh ./deploy/install.sh "$USER"
-sudo systemctl reset-failed readsb-adsb rtl-airband
-sudo systemctl restart readsb-adsb adsb-vhf-backend
+sudo systemctl reset-failed readsb-adsb acarsdec
+sudo systemctl restart readsb-adsb acarsdec adsb-vhf-backend
 systemctl --user restart adsb-kiosk.service
 ```
 
@@ -348,18 +316,17 @@ sudo raspi-config
 
 ```bash
 systemctl --failed
-systemctl status readsb-adsb rtl-airband adsb-vhf-backend
+systemctl status readsb-adsb acarsdec adsb-vhf-backend
 systemctl --user status adsb-kiosk
-journalctl -b -u readsb-adsb -u rtl-airband -u adsb-vhf-backend --no-pager
+journalctl -b -u readsb-adsb -u acarsdec -u adsb-vhf-backend --no-pager
 ```
 
 Типовые причины ошибок:
 
 - serial не записан либо оба донгла имеют одинаковый serial;
-- USB iSerial не совпадает с `SN:` у `rtl_test -t` (`rtl_airband`:
-  `RTLSDR device with serial number 0118 not found`, сервис в `activating`);
+- USB iSerial не совпадает с `SN:` у `rtl_test -t` (`acarsdec`:
+  устройство `0118` не найдено, сервис в `activating`);
 - DVB-модуль ядра всё ещё захватил USB-устройство;
 - пользователь сервиса не состоит в `rtl-sdr`;
-- Icecast не принимает source credentials;
-- страница открыта по HTTPS, а поток Icecast остался HTTP;
+- частоты ACARS не умещаются в ~2.4 МГц одного тюнера;
 - `ExecStart` backend не соответствует фактической структуре приложения.

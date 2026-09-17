@@ -54,13 +54,12 @@
     decodedJournalEpoch: 0,
     rawJournalEpoch: 0,
     journalTruncated: false,
-    radioChannels: [],
-    playingChannelId: null,
-    playingChannelName: "",
-    radioPlayback: "idle",
-    radioError: "",
-    radioPlayGeneration: 0,
-    squelchSnrDb: 0,
+    acarsMessages: [],
+    lastAcarsId: 0,
+    acarsGeneration: null,
+    acarsEpoch: 0,
+    acarsError: "",
+    acarsTruncated: false,
     journalError: "",
     stripRows: new Map(),
     stripMode: "live",
@@ -118,14 +117,13 @@
     }
 
     configureStation();
-    setRadioAvailable(Boolean(state.config.radio?.enabled));
     createMap();
     connectAircraftSocket();
     document.addEventListener("visibilitychange", resumeSocketIfVisible);
     window.setTimeout(() => {
       if (state.syncMode !== "live") void loadInitialAircraft();
     }, 2500);
-    const pollRadio = startPolling(loadRadioChannels, 5000);
+    const pollAcars = startPolling(loadAcarsMessages, 1000);
     const pollTypes = startPolling(loadTypeCatalog, 5000);
     const pollJournal = startPolling(loadJournal, 1000);
     const pollHealth = startPolling(refreshHealth, 5000);
@@ -133,11 +131,12 @@
     const pollStation = startPolling(loadStationStatus, 5000);
     void pollLayers();
     void pollStation();
-    void pollRadio();
+    void pollAcars();
     void pollTypes();
     void pollJournal();
     void pollHealth();
-    el["reload-radio"].addEventListener("click", () => void pollRadio());
+    el["reload-acars"].addEventListener("click", () => void pollAcars());
+    el["clear-acars"].addEventListener("click", () => void clearAcarsMessages());
   }
 
   function startPolling(task, ms) {
@@ -162,11 +161,10 @@
       "station-name", "connection", "connection-text", "clock", "clock-date", "clock-time",
       "visible-count", "aircraft-search", "aircraft-strip-body", "strip-empty",
       "strip-time-heading",
-      "custom-layers", "radio-list", "radio-audio", "now-playing",
+      "custom-layers",
       "ofm-option", "fit-aircraft", "toggle-tracks", "toggle-surface",
-      "reload-layers", "gis-diagnostics", "reload-radio", "radio-hint", "radio-quality",
-      "radio-channel-form", "radio-channel-name", "radio-channel-freq",
-      "radio-squelch", "radio-squelch-value",
+      "reload-layers", "gis-diagnostics", "reload-acars", "acars-hint", "acars-quality",
+      "acars-list", "acars-count", "clear-acars",
       "journal-list", "journal-count", "journal-hint", "clear-journal",
       "type-catalog-count", "type-catalog-form", "type-catalog-icao",
       "type-catalog-type", "type-catalog-desc", "type-catalog-list", "type-catalog-hint",
@@ -220,16 +218,6 @@
       const button = event.target.closest("[data-remove-icao]");
       if (button) void removeTypeCatalogEntry(button.dataset.removeIcao);
     });
-    el["radio-channel-form"].addEventListener("submit", submitRadioChannel);
-    el["radio-squelch"].addEventListener("input", () => {
-      syncSquelchControl(el["radio-squelch"].value, { keepSlider: true });
-    });
-    el["radio-squelch"].addEventListener("change", () => void saveRadioSquelch());
-    el["radio-list"].addEventListener("click", (event) => {
-      const button = event.target.closest("[data-remove-channel]");
-      if (button) void removeRadioChannel(button.dataset.removeChannel);
-    });
-    bindRadioAudio();
     el["session-start"].addEventListener("click", () => void controlSession("start"));
     el["session-stop"].addEventListener("click", () => void controlSession("stop"));
     el["session-download"].addEventListener("click", () => void downloadSession());
@@ -1524,13 +1512,13 @@
       ["Загрузка", `${gis.load_ms ?? 0} мс · слоёв ${gis.layer_count ?? 0} · объектов ${gis.feature_count ?? 0} · зон ${gis.geofence_count ?? 0}`],
       ["Ошибки", gisErrors.length ? gisErrors.map(formatGisError).join("; ") : "нет"],
     ], gisErrors.length > 0);
-    const vhfChannels = Array.isArray(radio.channels) ? radio.channels : [];
-    appendStationBlock(wrap, "Радио", [
-      ["VHF", radio.enabled ? `каналов ${vhfChannels.length}, активных ${radio.active_channels ?? 0}` : "нет"],
-      ["Шумодав", squelchLabel(radio.squelch_snr_db)],
-      ["Уровни", vhfChannels.length ? vhfChannels.map(formatRadioQuality).join("; ") : "—"],
+    appendStationBlock(wrap, "ACARS", [
+      ["Приёмник", radio.enabled ? "готов" : "нет"],
+      ["Частоты", formatAcarsFrequencies(radio.frequencies_mhz)],
+      ["Сообщений", String(radio.count ?? 0)],
+      ["Последнее", radio.last_at ? formatStationTime(radio.last_at) : "—"],
     ]);
-    renderRadioQualityStrip(payload);
+    renderAcarsQualityStrip(payload);
     if (session.recording) {
       el["session-status"].textContent =
         `Идёт запись: ${session.batches || 0} пакетов, ${session.updates || 0} обновлений`;
@@ -1580,30 +1568,25 @@
     return item.kept_previous ? `${id}: ${reason} (оставлена предыдущая версия)` : `${id}: ${reason}`;
   }
 
-  function formatRadioQuality(channel) {
-    const name = channel.name || channel.id || "канал";
-    const level = channel.level_dbfs == null ? "dBFS —" : `${Number(channel.level_dbfs).toFixed(1)} dBFS`;
-    const active = channel.active === true ? "активен" : (channel.active === false ? "тишина" : "н/д");
-    return `${name}: ${level}, ${active}`;
+  function formatAcarsFrequencies(values) {
+    const freqs = Array.isArray(values) ? values : (state.config.acars?.frequencies_mhz || []);
+    return freqs.length ? freqs.map((item) => `${item}`).join(" · ") : "—";
   }
 
-  function renderRadioQualityStrip(payload) {
-    if (!el["radio-quality"]) return;
+  function renderAcarsQualityStrip(payload) {
+    if (!el["acars-quality"]) return;
     const adsb = payload.adsb || {};
     const radio = payload.radio || {};
     const positions = payload.positions || {};
     const list = document.createElement("dl");
     list.className = "quality-strip";
-    const vhfRows = (radio.channels || []).map((channel) => [
-      channel.name || channel.id || "VHF",
-      formatRadioQuality(channel).replace(/^[^:]+:\s*/, ""),
-    ]);
     [
       ["ADS-B", `${adsb.status || "—"} · возраст JSON ${adsb.json_age_s ?? "—"} с · бортов ${adsb.aircraft ?? "—"}`],
       ["Позиции", formatPositionAge(positions)],
-      ["VHF", radio.enabled ? `активных ${radio.active_channels ?? 0} / ${(radio.channels || []).length}` : "приёмник не готов"],
+      ["ACARS", radio.enabled ? `сообщений ${radio.count ?? 0}` : "приёмник не готов"],
+      ["Частоты", formatAcarsFrequencies(radio.frequencies_mhz)],
       ["SDR", `ADS-B ${radio.adsb || "—"} · VHF ${radio.vhf || "выкл."}`],
-      ...vhfRows,
+      ["Последнее", radio.last_at ? formatStationTime(radio.last_at) : "—"],
     ].forEach(([name, value]) => {
       const row = document.createElement("div");
       row.className = "quality-strip__row";
@@ -1614,7 +1597,7 @@
       row.append(dt, dd);
       list.append(row);
     });
-    el["radio-quality"].replaceChildren(list);
+    el["acars-quality"].replaceChildren(list);
   }
 
   async function controlSession(action) {
@@ -2233,277 +2216,142 @@
     }
   }
 
-  async function loadRadioChannels() {
-    el["reload-radio"].disabled = true;
-    try {
-      const config = await fetchJson("/api/radio/config");
-      const configured = Array.isArray(config.channels) ? config.channels : [];
-      let live = [];
+  async function loadAcarsMessages() {
+    const fetchId = ++state.acarsEpoch;
+    let afterId = state.lastAcarsId;
+    for (let page = 0; page < JOURNAL_CATCHUP_PAGES; page += 1) {
       try {
-        const payload = await fetchJson("/api/radio/channels");
-        live = Array.isArray(payload) ? payload : (payload.channels || []);
-      } catch (_error) {
-        live = [];
+        const payload = await fetchJson(
+          `/api/acars?after_id=${afterId}&limit=${JOURNAL_LIMIT}`,
+        );
+        if (fetchId !== state.acarsEpoch) return;
+        const generation = text(payload?.generation, "");
+        if (generation && state.acarsGeneration && generation !== state.acarsGeneration) {
+          state.acarsMessages = [];
+          state.lastAcarsId = 0;
+          afterId = 0;
+          state.acarsGeneration = generation;
+          continue;
+        }
+        if (generation) state.acarsGeneration = generation;
+        const messages = Array.isArray(payload.messages) ? payload.messages : [];
+        const cursor = finite(payload.next_after_id);
+        if (cursor !== null) state.lastAcarsId = cursor;
+        state.acarsTruncated = Boolean(payload.truncated);
+        const hadError = Boolean(state.acarsError);
+        state.acarsError = "";
+        if (messages.length) {
+          state.acarsMessages = mergeJournalItems(state.acarsMessages, messages);
+          renderAcarsMessages();
+        } else if (!state.acarsMessages.length || hadError) {
+          renderAcarsMessages();
+        }
+        afterId = state.lastAcarsId;
+        if (!(payload.has_more && afterId > 0 && payload.mode === "since")) break;
+      } catch (error) {
+        if (fetchId !== state.acarsEpoch) return;
+        state.acarsError = `Не удалось загрузить ACARS: ${error.message}`;
+        renderAcarsMessages();
+        return;
       }
-      const liveById = new Map(live.map((item) => [text(item.id, ""), item]));
-      const channels = configured.map((channel) => {
-        const liveItem = liveById.get(text(channel.id, ""));
-        return liveItem ? { ...channel, ...liveItem, stream_url: channel.stream_url } : channel;
-      });
-      state.radioChannels = channels;
-      state.radioError = "";
-      syncSquelchControl(config.squelch_snr_db);
-      setRadioHint("");
-      setRadioAvailable(channels.length > 0 || Boolean(state.config.radio?.enabled));
-      renderRadioChannels(channels);
-    } catch (error) {
-      state.radioError = `Не удалось обновить каналы: ${error.message}`;
-      setRadioHint(state.radioError);
-      if (state.radioChannels.length) {
-        renderRadioChannels(state.radioChannels);
-      } else {
-        setRadioAvailable(Boolean(state.config.radio?.enabled));
-        el["radio-list"].replaceChildren(emptyNode("Не удалось загрузить каналы", true));
-      }
-    } finally {
-      el["reload-radio"].disabled = false;
     }
   }
 
-  async function submitRadioChannel(event) {
-    event.preventDefault();
-    const name = el["radio-channel-name"].value.trim();
-    const frequency = Number(el["radio-channel-freq"].value);
+  async function clearAcarsMessages() {
+    state.acarsEpoch += 1;
     try {
-      const payload = await fetchJson("/api/radio/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, frequency_mhz: frequency }),
-      });
-      el["radio-channel-form"].reset();
-      el["radio-channel-name"].focus();
-      const channels = Array.isArray(payload.channels) ? payload.channels : [];
-      state.radioChannels = channels;
-      setRadioHint("");
-      renderRadioChannels(channels);
+      const payload = await fetchJson("/api/acars/clear", { method: "POST" });
+      state.acarsMessages = [];
+      state.lastAcarsId = 0;
+      state.acarsTruncated = false;
+      state.acarsError = "";
+      if (payload.generation) state.acarsGeneration = payload.generation;
+      renderAcarsMessages();
     } catch (error) {
-      setRadioHint(`Не удалось сохранить частоту: ${error.message}`);
+      state.acarsError = `Не удалось очистить ACARS: ${error.message}`;
+      renderAcarsMessages();
     }
   }
 
-  async function removeRadioChannel(channelId) {
-    if (!channelId) return;
-    try {
-      const payload = await fetchJson(`/api/radio/config/${encodeURIComponent(channelId)}`, {
-        method: "DELETE",
-      });
-      const channels = Array.isArray(payload.channels) ? payload.channels : [];
-      state.radioChannels = channels;
-      setRadioHint("");
-      renderRadioChannels(channels);
-    } catch (error) {
-      setRadioHint(`Не удалось удалить частоту: ${error.message}`);
+  function renderAcarsMessages() {
+    const list = el["acars-list"];
+    if (!list) return;
+    const stickToNewest = list.scrollTop < 32;
+    const previousHeight = list.scrollHeight;
+    const previousTop = list.scrollTop;
+    const items = state.acarsMessages;
+    if (el["acars-count"]) el["acars-count"].textContent = String(items.length);
+    const defaultHint =
+      "Декодер acarsdec на втором RTL (serial 0118) шлёт JSON по UDP. Голос остаётся на отдельном приёмнике. Время — UTC.";
+    const truncated = state.acarsTruncated
+      ? " Кольцевой журнал вытеснил более старые записи."
+      : "";
+    if (el["acars-hint"]) {
+      el["acars-hint"].textContent = state.acarsError || `${defaultHint}${truncated}`;
+      el["acars-hint"].classList.toggle("error-state", Boolean(state.acarsError));
     }
-  }
-
-  function setRadioHint(message, isError = true) {
-    if (!el["radio-hint"]) return;
-    el["radio-hint"].hidden = !message;
-    el["radio-hint"].textContent = message || "";
-    el["radio-hint"].classList.toggle("error-state", Boolean(message) && isError);
-  }
-
-  function squelchLabel(value) {
-    const number = finite(value) ?? 0;
-    if (number <= 0) return "выкл";
-    return `${number.toFixed(1)} дБ SNR`;
-  }
-
-  function syncSquelchControl(value, options = {}) {
-    const number = finite(value) ?? 0;
-    state.squelchSnrDb = number;
-    if (!el["radio-squelch"]) return;
-    if (!options.keepSlider && document.activeElement !== el["radio-squelch"]) {
-      el["radio-squelch"].value = String(number);
-    }
-    if (el["radio-squelch-value"]) el["radio-squelch-value"].textContent = squelchLabel(number);
-  }
-
-  async function saveRadioSquelch() {
-    const value = Number(el["radio-squelch"].value);
-    try {
-      const payload = await fetchJson("/api/radio/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ squelch_snr_db: value }),
-      });
-      syncSquelchControl(payload.squelch_snr_db);
-      const label = squelchLabel(payload.squelch_snr_db);
-      setRadioHint(
-        label === "выкл"
-          ? "Шумодав выключен, приёмник перезапускается."
-          : `Шумодав ${label}, приёмник перезапускается.`,
-        false,
+    if (!items.length) {
+      list.replaceChildren(
+        emptyNode(
+          state.acarsError ? "Поток ACARS недоступен" : "Ожидание сообщений ACARS…",
+          Boolean(state.acarsError),
+        ),
       );
-    } catch (error) {
-      setRadioHint(`Не удалось сохранить шумодав: ${error.message}`);
-    }
-  }
-
-  function setRadioAvailable(_available) {
-    const radioTab = document.querySelector('.tab[data-tab="radio"]');
-    if (radioTab) radioTab.hidden = false;
-  }
-
-  function renderRadioChannels(channels) {
-    if (!channels.length) {
-      el["radio-list"].replaceChildren(emptyNode(state.radioError || "Добавьте VHF-частоту", Boolean(state.radioError)));
       return;
     }
     const fragment = document.createDocumentFragment();
-    channels.forEach((channel) => {
-      const row = document.createElement("div");
-      row.className = "radio-channel";
-      const active = channel.active === undefined ? channel.activity : channel.active;
-      row.classList.toggle("is-active", active === true);
-      row.classList.toggle("is-playing", text(channel.id, "") === text(state.playingChannelId, ""));
-      const activity = document.createElement("span");
-      activity.className = "radio-channel__activity";
-      activity.title = radioActivityLabel(active);
-      const info = document.createElement("span");
-      info.className = "radio-channel__info";
-      const name = document.createElement("strong");
-      name.textContent = text(channel.name ?? channel.label, "Канал");
-      const frequency = document.createElement("small");
-      const frequencyValue = channel.frequency_mhz ?? channel.frequency;
-      const level = finite(channel.level_dbfs);
-      frequency.textContent = [
-        frequencyValue === undefined ? "Частота не указана" : `${frequencyValue} МГц`,
-        level === null ? null : `${level.toFixed(1)} dBFS`,
-        radioActivityLabel(active),
-      ].filter(Boolean).join(" · ");
-      info.append(name, frequency);
-      const play = document.createElement("button");
-      play.type = "button";
-      play.className = "radio-channel__play";
-      play.textContent = "▶";
-      play.title = "Слушать канал";
-      play.addEventListener("click", () => playRadioChannel(channel, row));
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "radio-channel__remove";
-      remove.dataset.removeChannel = text(channel.id, "");
-      remove.textContent = "×";
-      remove.title = "Удалить частоту";
-      row.append(activity, info, play, remove);
-      fragment.append(row);
+    [...items].reverse().forEach((message) => {
+      const entry = document.createElement("article");
+      entry.className = "journal-entry";
+      const timestamp = document.createElement("time");
+      const date = new Date(message.timestamp);
+      const valid = !Number.isNaN(date.getTime());
+      if (valid) timestamp.dateTime = date.toISOString();
+      timestamp.textContent = valid ? `${formatUtcTime(date)} UTC` : "—";
+      const identity = document.createElement("strong");
+      identity.textContent = [
+        text(message.flight, ""),
+        text(message.tail, ""),
+        message.label ? `L${message.label}` : "",
+      ].filter(Boolean).join(" ") || "без позывного";
+      const body = document.createElement("p");
+      body.textContent = text(message.text, text(message.summary, "Пустое сообщение"));
+      const details = document.createElement("dl");
+      details.className = "journal-entry__fields";
+      acarsRows(message).forEach(([name, value]) => {
+        const row = document.createElement("div");
+        row.className = "journal-entry__row";
+        const dt = document.createElement("dt");
+        dt.textContent = name;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        row.append(dt, dd);
+        details.append(row);
+      });
+      entry.append(timestamp, identity, body, details);
+      fragment.append(entry);
     });
-    el["radio-list"].replaceChildren(fragment);
-    updateNowPlaying();
+    list.replaceChildren(fragment);
+    if (stickToNewest) list.scrollTop = 0;
+    else list.scrollTop = previousTop + (list.scrollHeight - previousHeight);
   }
 
-  function radioActivityLabel(active) {
-    if (active === true) return "Есть активность";
-    if (active === false) return "Нет активности";
-    return "Активность неизвестна";
-  }
-
-  function radioStreamUrl() {
-    return new URL("/api/radio/stream", location.href).href;
-  }
-
-  function radioPlaybackErrorText(error) {
-    if (error && error.name === "NotAllowedError") {
-      return "браузер блокирует автозапуск — нажмите Play на плеере";
-    }
-    if (error && error.message && error.name !== "AbortError") {
-      const message = String(error.message).trim();
-      if (message && message !== "ошибка потока") return message;
-    }
-    const media = el["radio-audio"]?.error;
-    if (media && media.code === 3) {
-      return "браузер не смог декодировать MP3-поток";
-    }
-    if (media && (media.code === 2 || media.code === 4)) {
-      return "нет потока Icecast: rtl-airband должен быть active (не activating), mount vhf-scan.mp3 по GET";
-    }
-    return "ошибка потока";
-  }
-
-  function bindRadioAudio() {
-    const audio = el["radio-audio"];
-    if (!audio) return;
-    audio.addEventListener("playing", () => {
-      state.radioPlayback = "playing";
-      state.radioError = "";
-      updateNowPlaying();
-    });
-    audio.addEventListener("waiting", () => {
-      if (state.radioPlayback === "error") return;
-      state.radioPlayback = "waiting";
-      updateNowPlaying();
-    });
-    audio.addEventListener("ended", () => {
-      if (state.radioPlayback === "error") return;
-      state.radioPlayback = "ended";
-      updateNowPlaying();
-    });
-    audio.addEventListener("error", () => {
-      state.radioPlayback = "error";
-      state.radioError = radioPlaybackErrorText();
-      updateNowPlaying();
-    });
-  }
-
-  function updateNowPlaying() {
-    if (!el["now-playing"]) return;
-    el["now-playing"].classList.toggle("error-state", state.radioPlayback === "error");
-    if (!state.playingChannelId) {
-      el["now-playing"].textContent = state.radioError || "Поток не выбран";
-      return;
-    }
-    const labels = {
-      playing: "",
-      waiting: " (буфер…)",
-      ended: " (остановлен)",
-      error: ` (${state.radioError || "ошибка потока"})`,
-      idle: "",
+  function acarsRows(message) {
+    const rows = [];
+    const add = (name, value) => {
+      if (value === null || value === undefined || value === "") return;
+      rows.push([name, String(value)]);
     };
-    el["now-playing"].textContent =
-      `${state.playingChannelName || "VHF-канал"}${labels[state.radioPlayback] || ""}`;
-  }
-
-  async function playRadioChannel(channel, row) {
-    const generation = ++state.radioPlayGeneration;
-    const audio = el["radio-audio"];
-    state.playingChannelId = text(channel.id, "");
-    state.playingChannelName = text(channel.name ?? channel.label, "VHF-канал");
-    state.radioPlayback = "waiting";
-    state.radioError = "";
-    document.querySelectorAll(".radio-channel").forEach((item) => item.classList.remove("is-playing"));
-    row.classList.add("is-playing");
-    updateNowPlaying();
-    try {
-      await fetchJson("/api/radio/stream-status", { timeoutMs: 5000 });
-    } catch (error) {
-      if (generation !== state.radioPlayGeneration) return;
-      state.radioPlayback = "error";
-      state.radioError = radioPlaybackErrorText(error);
-      updateNowPlaying();
-      return;
-    }
-    if (generation !== state.radioPlayGeneration) return;
-    audio.pause();
-    audio.src = `${radioStreamUrl()}?t=${Date.now()}`;
-    try {
-      await audio.play();
-    } catch (error) {
-      if (generation !== state.radioPlayGeneration) return;
-      if (error?.name === "AbortError") return;
-      state.radioPlayback = "error";
-      state.radioError = radioPlaybackErrorText(error);
-      updateNowPlaying();
-    }
+    add("Рейс", message.flight);
+    add("Борт", message.tail);
+    add("Метка", message.label);
+    add("Mode", message.mode);
+    add("Блок", message.block_id);
+    add("№", message.msgno);
+    if (message.frequency_mhz != null) add("Частота", `${message.frequency_mhz} МГц`);
+    if (message.error) add("Ошибки", message.error);
+    if (message.level != null) add("Уровень", `${Number(message.level).toFixed(1)} дБ`);
+    return rows;
   }
 
   function emptyNode(message, isError = false) {

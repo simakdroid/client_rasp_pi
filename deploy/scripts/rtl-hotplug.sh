@@ -6,7 +6,7 @@ set -eu
 
 MODE=/usr/local/lib/adsb-vhf/rtl-device-mode.sh
 
-systemctl reset-failed readsb-adsb.service rtl-airband.service >/dev/null 2>&1 || true
+systemctl reset-failed readsb-adsb.service acarsdec.service rtl-airband.service >/dev/null 2>&1 || true
 
 if "$MODE" adsb-device >/dev/null 2>&1; then
   systemctl restart readsb-adsb.service || systemctl start readsb-adsb.service || true
@@ -15,7 +15,8 @@ else
 fi
 
 if "$MODE" vhf-available; then
-  systemctl restart rtl-airband.service || systemctl start rtl-airband.service || true
+  systemctl restart acarsdec.service || systemctl start acarsdec.service || true
 else
+  systemctl stop acarsdec.service >/dev/null 2>&1 || true
   systemctl stop rtl-airband.service >/dev/null 2>&1 || true
 fi

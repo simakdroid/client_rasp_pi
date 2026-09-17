@@ -77,7 +77,7 @@ def collect_diagnostics(
     positions: dict[str, Any] | None = None,
     session: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a support dump without tokens, passwords or stream URLs."""
+    """Build a support dump without tokens, passwords or decoder secrets."""
     return {
         "created_at": datetime.now(UTC).isoformat(),
         "app": {
@@ -141,18 +141,6 @@ def _app_version() -> str:
 
 
 def _public_settings(settings: Settings) -> dict[str, Any]:
-    channels: list[dict[str, Any]] = []
-    try:
-        channels = [
-            {
-                "id": channel.id,
-                "name": channel.name,
-                "frequency_mhz": channel.frequency_mhz,
-            }
-            for channel in settings.radio_channels
-        ]
-    except (ValueError, TypeError):
-        channels = []
     return {
         "host": settings.host,
         "port": settings.port,
@@ -174,5 +162,7 @@ def _public_settings(settings: Settings) -> dict[str, Any]:
         "radio_min_rtl_receivers": settings.radio_min_rtl_receivers,
         "adsb_preferred_serial": settings.adsb_preferred_serial,
         "radio_receiver_serial": settings.radio_receiver_serial,
-        "radio_channels": channels,
+        "acars_udp_host": settings.acars_udp_host,
+        "acars_udp_port": settings.acars_udp_port,
+        "acars_frequencies_mhz": list(settings.acars_frequencies_mhz),
     }

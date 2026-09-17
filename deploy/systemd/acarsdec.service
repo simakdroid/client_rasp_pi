@@ -1,0 +1,26 @@
+[Unit]
+Description=acarsdec VHF ACARS decoder
+Documentation=https://github.com/TLeconte/acarsdec
+After=network-online.target
+Wants=network-online.target
+Conflicts=rtl-airband.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=rtl-airband
+Group=rtl-airband
+SupplementaryGroups=rtl-sdr
+EnvironmentFile=-/etc/adsb-vhf/sdr.env
+EnvironmentFile=-/etc/adsb-vhf/acarsdec.env
+ExecCondition=/usr/local/lib/adsb-vhf/rtl-device-mode.sh vhf-available
+ExecStart=/usr/local/lib/adsb-vhf/start-acarsdec.sh
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

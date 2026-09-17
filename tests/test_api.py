@@ -1,5 +1,3 @@
-import json
-
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -12,6 +10,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         readsb_json_path=tmp_path / "missing-aircraft.json",
         coverage_path=tmp_path / "coverage-rose.json",
         aircraft_types_path=tmp_path / "aircraft-types.json",
+        acars_udp_port=55553,
     )
     with TestClient(create_app(settings)) as client:
         health = client.get("/api/health")
@@ -45,7 +44,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="panel-journal"' in page
         assert 'data-journal-mode="raw"' in page
         assert 'id="journal-list"' in page
-        assert 'id="radio-hint"' in page
+        assert 'id="acars-hint"' in page
         assert 'id="journal-pager"' not in page
         assert 'id="strip-board"' in page
         assert 'id="toggle-surface"' in page
@@ -71,8 +70,11 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="panel-station"' in page
         assert 'id="session-upload"' in page
         assert 'id="coverage-bands"' not in page
-        assert 'id="radio-quality"' in page
-        assert 'id="radio-squelch"' in page
+        assert 'id="acars-quality"' in page
+        assert 'id="acars-list"' in page
+        assert 'data-tab="acars"' in page
+        assert 'data-tab="radio"' not in page
+        assert 'id="radio-squelch"' not in page
         assert 'data-journal-mode="geofence"' in page
         assert 'id="gis-diagnostics"' in page
         station = client.get("/api/station").json()
@@ -117,8 +119,9 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "aircraftTypeCode(aircraft)" in script
         assert "latNum" in script
         assert "next_after_id" in script
-        assert "/api/radio/stream" in script
-        assert "/api/radio/stream-status" in script
+        assert "/api/acars" in script
+        assert "/api/radio/stream" not in script
+        assert "/api/radio/stream-status" not in script
         diagnostics = client.get("/api/station/diagnostics").json()
         blob = str(diagnostics)
         assert "admin_token" not in blob
@@ -128,7 +131,13 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert "version" in diagnostics["app"]
         assert diagnostics["gis"]["last_good_version"] == 0
         assert "radio" in diagnostics
-        assert "stream_url" not in blob
+        assert "acars_frequencies_mhz" in diagnostics["settings"]
+        acars = client.get("/api/acars").json()
+        assert acars["messages"] == []
+        cleared = client.post("/api/acars/clear").json()
+        assert cleared["ok"] is True
+        config = client.get("/api/config").json()
+        assert config["acars"]["frequencies_mhz"] == [131.525, 131.550, 131.725, 131.825]
 
 
 def test_blank_ofm_url_becomes_none() -> None:
@@ -143,77 +152,34 @@ def test_vhf_serial_aliases_radio_receiver_serial(monkeypatch) -> None:
     assert settings.radio_receiver_serial == "4242"
 
 
-def test_radio_channels_json_is_the_channel_list() -> None:
+def test_acars_frequencies_parse_from_env(monkeypatch) -> None:
+    monkeypatch.delenv("AIRMON_ACARS_FREQUENCIES_MHZ", raising=False)
     settings = Settings(
         _env_file=None,
-        radio_channels_json='[{"id":"tower","name":"Вышка","frequency_mhz":121.7}]',
+        acars_frequencies_mhz="131.525,131.825",
     )
-    channels = settings.radio_channels
-    assert channels[0].frequency_mhz == 121.7
-    assert channels[0].stream_url.endswith("/vhf-scan.mp3")
+    assert settings.acars_frequencies_mhz == [131.525, 131.825]
 
 
-def test_radio_config_can_be_edited_from_api(tmp_path) -> None:
+def test_station_exposes_acars_status(tmp_path) -> None:
     settings = Settings(
         layers_dir=tmp_path,
         readsb_json_path=tmp_path / "missing-aircraft.json",
         coverage_path=tmp_path / "coverage-rose.json",
         aircraft_types_path=tmp_path / "aircraft-types.json",
-        radio_channels_path=tmp_path / "radio-channels.json",
         radio_auto_detect=False,
-        radio_channels_json='[{"id":"tower","name":"Вышка","frequency_mhz":118.1}]',
+        acars_udp_port=55552,
+        acars_frequencies_mhz=[131.525, 131.825],
     )
     with TestClient(create_app(settings)) as client:
-        listed = client.get("/api/radio/config").json()
-        assert listed["squelch_snr_db"] == 0
-        assert listed["channels"][0]["frequency_mhz"] == 118.1
-        added = client.post(
-            "/api/radio/config",
-            json={"name": "ATIS", "frequency_mhz": 123.7},
-        )
-        assert added.status_code == 200
-        freqs = [item["frequency_mhz"] for item in added.json()["channels"]]
-        assert 118.1 in freqs and 123.7 in freqs
-        assert added.json()["squelch_snr_db"] == 0
-        channel_id = next(
-            item["id"] for item in added.json()["channels"] if item["frequency_mhz"] == 123.7
-        )
-        deleted = client.delete(f"/api/radio/config/{channel_id}")
-        assert deleted.status_code == 200
-        leftover = [item["frequency_mhz"] for item in deleted.json()["channels"]]
-        assert leftover == [118.1]
-        squelch = client.put("/api/radio/config", json={"squelch_snr_db": 8})
-        assert squelch.status_code == 200
-        assert squelch.json()["squelch_snr_db"] == 8
-        saved = json.loads((tmp_path / "radio-channels.json").read_text(encoding="utf-8"))
-        assert saved["squelch_snr_db"] == 8
-        assert [item["frequency_mhz"] for item in saved["channels"]] == [118.1]
-    settings = Settings(
-        layers_dir=tmp_path,
-        readsb_json_path=tmp_path / "missing-aircraft.json",
-        coverage_path=tmp_path / "coverage-rose.json",
-        aircraft_types_path=tmp_path / "aircraft-types.json",
-        radio_auto_detect=False,
-        radio_channels_json=(
-            '[{"id":"tower","name":"Вышка","frequency_mhz":118.1,'
-            '"stream_url":"http://127.0.0.1:8000/vhf-118100.mp3"}]'
-        ),
-        radio_icecast_port=59999,
-    )
-    with TestClient(create_app(settings), base_url="http://192.168.1.10:8080") as client:
-        channels = client.get("/api/radio/channels").json()
-    assert channels[0]["stream_url"] == "http://192.168.1.10:8080/api/radio/stream"
+        station = client.get("/api/station").json()
+        assert station["radio"]["enabled"] is True
+        assert station["radio"]["count"] == 0
+        assert station["radio"]["frequencies_mhz"] == [131.525, 131.825]
+        assert "squelch_snr_db" not in station["radio"]
+        assert "channels" not in station["radio"]
+        assert client.get("/api/radio/stream").status_code == 404
 
-    with TestClient(create_app(settings), base_url="http://127.0.0.1:8080") as client:
-        local = client.get("/api/radio/channels").json()
-        assert local[0]["stream_url"] == "http://127.0.0.1:8080/api/radio/stream"
-        missing = client.get("/api/radio/stream")
-        assert missing.status_code == 503
-        status = client.get("/api/radio/stream-status")
-        assert status.status_code == 503
-        assert "Icecast" in status.json()["detail"]
-        head = client.head("/api/radio/stream")
-        assert head.status_code == 503
 
 
 def test_gzip_and_unknown_mbtiles_formats(tmp_path) -> None:

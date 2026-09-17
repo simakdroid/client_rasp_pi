@@ -28,10 +28,7 @@ def test_adsb_status_reports_missing_json(tmp_path) -> None:
 def test_diagnostics_package_omits_secrets() -> None:
     settings = Settings(
         admin_token="super-secret-token",
-        radio_channels_json=(
-            '[{"id":"tower","name":"Вышка","frequency_mhz":118.1,'
-            '"stream_url":"http://user:pass@127.0.0.1:8000/vhf.mp3"}]'
-        ),
+        radio_auto_detect=True,
     )
     payload = collect_diagnostics(
         settings=settings,
@@ -45,7 +42,7 @@ def test_diagnostics_package_omits_secrets() -> None:
     assert "stream_url" not in blob
     assert "user:pass" not in blob
     assert payload["settings"]["admin_required"] is True
-    assert payload["app"]["version"] == "2.3.1"
+    assert payload["app"]["version"] == "2.4.0"
     assert "caption" in payload["coverage"]
-    assert payload["settings"]["radio_channels"][0]["id"] == "tower"
-    assert "frequency_mhz" in payload["settings"]["radio_channels"][0]
+    assert payload["settings"]["acars_frequencies_mhz"] == [131.525, 131.550, 131.725, 131.825]
+    assert "radio_channels" not in payload["settings"]
