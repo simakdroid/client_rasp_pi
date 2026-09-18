@@ -731,6 +731,10 @@
   function updateArchiveTrack(aircraft) {
     const key = archiveKey(aircraft);
     if (!key) return;
+    if (key !== state.selectedIcao || !shouldShowContact(aircraft)) {
+      removeArchiveTrack(key);
+      return;
+    }
     syncTrackLayer(state.archiveTracks, key, aircraft, true);
   }
 
@@ -752,18 +756,18 @@
     }
     const options = {
       color: altitudeColor(aircraftAltitude(aircraft)),
-      weight: 2,
-      opacity: archived ? .38 : .65,
-      dashArray: archived ? "5 7" : null,
+      weight: archived ? 3 : 2,
+      opacity: archived ? .9 : .65,
       interactive: false,
       className: archived ? "aircraft-track is-archived" : "aircraft-track",
     };
     if (existing) {
       existing.setLatLngs(points);
       existing.setStyle(options);
+      if ((archived || state.tracksVisible) && !state.map.hasLayer(existing)) existing.addTo(state.map);
     } else {
       const track = L.polyline(points, options);
-      if (state.tracksVisible) track.addTo(state.map);
+      if (archived || state.tracksVisible) track.addTo(state.map);
       store.set(key, track);
     }
   }
@@ -778,12 +782,10 @@
 
   function toggleTracks() {
     state.tracksVisible = !state.tracksVisible;
-    const apply = (track) => {
+    state.tracks.forEach((track) => {
       if (state.tracksVisible && !state.map.hasLayer(track)) track.addTo(state.map);
       if (!state.tracksVisible && state.map.hasLayer(track)) state.map.removeLayer(track);
-    };
-    state.tracks.forEach(apply);
-    state.archiveTracks.forEach(apply);
+    });
     el["toggle-tracks"].classList.toggle("is-active", state.tracksVisible);
     el["toggle-tracks"].setAttribute("aria-pressed", String(state.tracksVisible));
   }
@@ -793,7 +795,8 @@
     el["toggle-surface"].classList.toggle("is-active", state.surfaceVisible);
     el["toggle-surface"].setAttribute("aria-pressed", String(state.surfaceVisible));
     if (!state.surfaceVisible && state.selectedIcao) {
-      const selected = state.aircraft.get(state.selectedIcao);
+      const selected = state.aircraft.get(state.selectedIcao)
+        || state.archived.get(state.selectedIcao);
       if (selected && isSurfaceVehicle(selected)) state.selectedIcao = null;
     }
     state.aircraft.forEach((aircraft) => {
@@ -832,14 +835,44 @@
     fitAircraft();
   }
 
-  function selectAircraft(icao) {
+  function selectAircraft(key) {
+    const archived = state.archived.get(key);
+    if (archived && state.selectedIcao === key) {
+      state.selectedIcao = null;
+      updateArchiveTrack(archived);
+      renderAircraftList();
+      return;
+    }
     const previous = state.selectedIcao;
-    state.selectedIcao = icao;
-    if (previous && previous !== icao) refreshAircraftMarker(previous);
-    refreshAircraftMarker(icao);
-    const marker = state.markers.get(icao) || state.archiveMarkers.get(icao);
-    if (marker) state.map.panTo(marker.getLatLng());
+    state.selectedIcao = key;
+    if (previous && previous !== key) {
+      refreshAircraftMarker(previous);
+      const previousArchive = state.archived.get(previous);
+      if (previousArchive) updateArchiveTrack(previousArchive);
+    }
+    refreshAircraftMarker(key);
+    if (archived) {
+      updateArchiveTrack(archived);
+      focusTrailOnMap(archived);
+    } else {
+      const marker = state.markers.get(key) || state.archiveMarkers.get(key);
+      if (marker) state.map.panTo(marker.getLatLng());
+    }
     renderAircraftList();
+  }
+
+  function focusTrailOnMap(aircraft) {
+    if (!state.map) return;
+    const points = normalizeTrail(
+      aircraft.track ?? aircraft.trail ?? aircraft.positions ?? aircraft.track_history,
+    );
+    state.autoFitting = true;
+    if (points.length >= 2) {
+      state.map.fitBounds(L.latLngBounds(points).pad(.2), { maxZoom: 11, animate: false });
+    } else if (points.length === 1) {
+      state.map.setView(points[0], Math.max(state.map.getZoom(), 9), { animate: false });
+    }
+    state.autoFitting = false;
   }
 
   function refreshAircraftMarker(icao) {
