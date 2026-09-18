@@ -189,6 +189,7 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert archived[0]["started_at"] is not None
     first_started = archived[0]["started_at"]
     first_lost = archived[0]["lost_at"]
+    first_archive_id = archived[0]["contact_id"]
 
     delta = await tracker.consume_delta()
     assert delta is not None
@@ -203,17 +204,17 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert live[0]["status"] == "live"
     assert live[0]["squawk"] == "7700"
     assert live[0]["callsign"] == "TEST42"
-    assert live[0]["started_at"] != first_started
+    assert live[0]["contact_id"] == first_archive_id
+    assert live[0]["started_at"] == first_started
     assert live[0]["lost_at"] is None
-    assert live[0]["track"][-1][0] == 55.2
-    assert all(point[0] != 55.1 for point in live[0]["track"])
+    assert [point[0] for point in live[0]["track"]] == [55.1, 55.2]
     assert await tracker.archived_snapshot() == []
 
     await tracker.prune()
     second_archive = await tracker.archived_snapshot()
-    assert second_archive[0]["started_at"] != first_started
+    assert second_archive[0]["started_at"] == first_started
     assert second_archive[0]["lost_at"] != first_lost
-    assert second_archive[0]["started_at"] == live[0]["started_at"]
+    assert second_archive[0]["contact_id"] == first_archive_id
 
 
 @pytest.mark.asyncio
@@ -271,7 +272,7 @@ async def test_tracker_keeps_archive_when_squawk_or_callsign_changes(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_tracker_starts_new_contact_when_identity_unknown(tmp_path) -> None:
+async def test_tracker_rejoins_when_identity_unknown(tmp_path) -> None:
     layers = LayerManager(tmp_path)
     layers.refresh()
     tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=3)
@@ -288,13 +289,11 @@ async def test_tracker_starts_new_contact_when_identity_unknown(tmp_path) -> Non
         [AircraftUpdate(icao="abc123", lat=55.4, lon=37.4, received_at=second_seen)]
     )
     live = await tracker.snapshot()
-    still_archived = await tracker.archived_snapshot()
     assert live[0]["squawk"] is None
     assert live[0]["callsign"] is None
-    assert live[0]["started_at"] != first_archive["started_at"]
-    assert len(still_archived) == 1
-    assert still_archived[0]["contact_id"] != live[0]["contact_id"]
-    assert still_archived[0]["started_at"] == first_archive["started_at"]
+    assert live[0]["started_at"] == first_archive["started_at"]
+    assert live[0]["contact_id"] == first_archive["contact_id"]
+    assert await tracker.archived_snapshot() == []
 
 
 def test_page_log_latest_and_sequential_do_not_skip_ids() -> None:
@@ -362,7 +361,7 @@ async def test_long_gap_starts_new_contact_even_with_same_identity(tmp_path) -> 
     await tracker.prune()
     first_archive = (await tracker.archived_snapshot())[0]
     await tracker.consume_delta()
-    later = datetime.now(UTC) + timedelta(seconds=10)
+    later = datetime.now(UTC) + timedelta(minutes=16)
     await tracker.apply(
         [
             AircraftUpdate(
@@ -384,9 +383,7 @@ async def test_long_gap_starts_new_contact_even_with_same_identity(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_tracker_starts_new_contact_when_only_one_identity_field_known(
-    tmp_path,
-) -> None:
+async def test_tracker_rejoins_when_only_squawk_known(tmp_path) -> None:
     layers = LayerManager(tmp_path)
     layers.refresh()
     tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=3)
@@ -403,6 +400,7 @@ async def test_tracker_starts_new_contact_when_only_one_identity_field_known(
         ]
     )
     await tracker.prune()
+    first_archive = (await tracker.archived_snapshot())[0]
     await tracker.consume_delta()
 
     second_seen = datetime.now(UTC) - timedelta(seconds=5)
@@ -418,12 +416,97 @@ async def test_tracker_starts_new_contact_when_only_one_identity_field_known(
         ]
     )
     live = await tracker.snapshot()
-    still_archived = await tracker.archived_snapshot()
     assert live[0]["squawk"] == "7700"
     assert live[0]["callsign"] is None
-    assert len(still_archived) == 1
-    assert still_archived[0]["squawk"] == "7700"
-    assert still_archived[0]["contact_id"] != live[0]["contact_id"]
+    assert live[0]["contact_id"] == first_archive["contact_id"]
+    assert live[0]["started_at"] == first_archive["started_at"]
+    assert await tracker.archived_snapshot() == []
+
+
+@pytest.mark.asyncio
+async def test_tracker_rejoins_when_squawk_changes_same_callsign(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=3)
+    first_seen = datetime.now(UTC) - timedelta(minutes=10)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.1,
+                lon=37.1,
+                squawk="7700",
+                callsign="TEST42",
+                received_at=first_seen,
+            )
+        ]
+    )
+    await tracker.prune()
+    first_archive = (await tracker.archived_snapshot())[0]
+    await tracker.consume_delta()
+
+    second_seen = datetime.now(UTC) - timedelta(seconds=5)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.4,
+                lon=37.4,
+                squawk="1200",
+                callsign="TEST42",
+                received_at=second_seen,
+            )
+        ]
+    )
+    live = await tracker.snapshot()
+    assert live[0]["squawk"] == "1200"
+    assert live[0]["callsign"] == "TEST42"
+    assert live[0]["contact_id"] == first_archive["contact_id"]
+    assert live[0]["started_at"] == first_archive["started_at"]
+    assert [point[0] for point in live[0]["track"]] == [55.1, 55.4]
+    assert await tracker.archived_snapshot() == []
+
+
+@pytest.mark.asyncio
+async def test_tracker_rejoins_when_callsign_arrives_later(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=3)
+    first_seen = datetime.now(UTC) - timedelta(minutes=10)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.1,
+                lon=37.1,
+                squawk="7700",
+                received_at=first_seen,
+            )
+        ]
+    )
+    await tracker.prune()
+    first_archive = (await tracker.archived_snapshot())[0]
+    await tracker.consume_delta()
+
+    second_seen = datetime.now(UTC) - timedelta(seconds=5)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.4,
+                lon=37.4,
+                squawk="7700",
+                callsign="TEST42",
+                received_at=second_seen,
+            )
+        ]
+    )
+    live = await tracker.snapshot()
+    assert live[0]["callsign"] == "TEST42"
+    assert live[0]["squawk"] == "7700"
+    assert live[0]["contact_id"] == first_archive["contact_id"]
+    assert live[0]["started_at"] == first_archive["started_at"]
+    assert await tracker.archived_snapshot() == []
 
 
 @pytest.mark.asyncio

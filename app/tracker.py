@@ -22,6 +22,7 @@ GEOD = Geod(ellps="WGS84")
 GEOFENCE_LEAVE_MISSES = 2
 HAMMING1_ALIAS_M = 25_000
 HEADING_MIN_DISTANCE_M = 8.0
+CONTACT_RESUME = timedelta(minutes=15)
 
 
 class AircraftTracker:
@@ -425,7 +426,7 @@ class AircraftTracker:
         if previous is None:
             return None
         if _should_start_new_contact(
-            previous, update, resume_after=self.ttl * 3
+            previous, update, resume_after=CONTACT_RESUME
         ):
             return AircraftState(
                 icao=update.icao,
@@ -433,17 +434,17 @@ class AircraftTracker:
                 type_code=previous.type_code,
                 type_desc=previous.type_desc,
             )
-        self._archive.pop(previous.contact_id, None)
-        if previous.contact_id:
-            self._archive_evicted.add(previous.contact_id)
-        return AircraftState(
-            icao=update.icao,
-            callsign=previous.callsign,
-            squawk=previous.squawk,
-            category=previous.category,
-            type_code=previous.type_code,
-            type_desc=previous.type_desc,
-        )
+        contact_id = previous.contact_id
+        self._archive.pop(contact_id, None)
+        if contact_id:
+            if contact_id in self._archive_added:
+                self._archive_added.remove(contact_id)
+            else:
+                self._archive_evicted.add(contact_id)
+        previous.lost_at = None
+        if previous.track:
+            self._track_appends[previous.icao] = list(previous.track)
+        return previous
 
     def _find_hamming1_alias(self, update: AircraftUpdate) -> AircraftState | None:
         matches = [
@@ -529,10 +530,10 @@ class AircraftTracker:
                 updated_at=update.received_at,
                 started_at=update.received_at,
             )
-            state.started_at = update.received_at
-            state.updated_at = update.received_at
             if not state.contact_id:
+                state.started_at = update.received_at
                 state.contact_id = self._next_contact_id(update.icao)
+            state.updated_at = update.received_at
             self._aircraft[update.icao] = state
             self._forget_geofence_state(update.icao)
         if not counted:
@@ -905,22 +906,20 @@ def _should_start_new_contact(
     *,
     resume_after: timedelta,
 ) -> bool:
-    """Same contact after a short gap; a long gap or conflicting identity starts a new one."""
+    """Resume the same contact after a short gap; a long gap or a new flight starts another."""
     if previous.lost_at is not None and (update.received_at - previous.lost_at) > resume_after:
         return True
     incoming_squawk = (update.squawk or "").strip() or None
     previous_squawk = (previous.squawk or "").strip() or None
     incoming_callsign = _normalized_callsign(update.callsign)
     previous_callsign = _normalized_callsign(previous.callsign)
-    if incoming_squawk and previous_squawk and incoming_squawk != previous_squawk:
-        return True
-    if incoming_callsign and previous_callsign and incoming_callsign != previous_callsign:
-        return True
-    if not incoming_callsign and not previous_callsign:
-        return True
-    if not incoming_squawk and not previous_squawk:
-        return True
-    return False
+    callsign_conflict = bool(
+        incoming_callsign and previous_callsign and incoming_callsign != previous_callsign
+    )
+    squawk_conflict = bool(
+        incoming_squawk and previous_squawk and incoming_squawk != previous_squawk
+    )
+    return callsign_conflict and squawk_conflict
 
 
 def _event_text(
