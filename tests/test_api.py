@@ -113,6 +113,7 @@ def test_ui_and_api_are_served(tmp_path) -> None:
         assert 'id="diagnostics-download"' in page
         script = client.get("/app.js").text
         assert "updateArchiveMarker" not in script
+        assert "updateArchiveTrack" in script
         assert "value >= 5000 ? \"F\" : \"A\"" not in script
         assert "aircraftTypeCode(aircraft)" in script
         assert "latNum" in script

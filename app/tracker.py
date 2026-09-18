@@ -205,7 +205,7 @@ class AircraftTracker:
                 for state in self._aircraft.values()
             ],
             "archived": [
-                self._export(state, include_track=False)
+                self._export(state, include_track=True)
                 for state in reversed(self._archive.values())
             ],
         }
@@ -213,7 +213,7 @@ class AircraftTracker:
     async def archived_snapshot(self) -> list[dict[str, Any]]:
         async with self._lock:
             return [
-                self._export(state, include_track=False)
+                self._export(state, include_track=True)
                 for state in reversed(self._archive.values())
             ]
 
@@ -300,7 +300,7 @@ class AircraftTracker:
                     ]
                 changed.append(item)
             archived = [
-                self._export(self._archive[contact_id], include_track=False)
+                self._export(self._archive[contact_id], include_track=True)
                 for contact_id in self._archive_added
                 if contact_id in self._archive
             ]

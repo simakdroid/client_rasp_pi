@@ -187,6 +187,7 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert archived[0]["squawk"] == "7700"
     assert archived[0]["lost_at"] is not None
     assert archived[0]["started_at"] is not None
+    assert archived[0]["track"][0][0] == 55.1
     first_started = archived[0]["started_at"]
     first_lost = archived[0]["lost_at"]
     first_archive_id = archived[0]["contact_id"]
@@ -195,6 +196,7 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert delta is not None
     assert delta["remove"] == ["abc123"]
     assert delta["archive"][0]["icao"] == "abc123"
+    assert delta["archive"][0]["track"][0][0] == 55.1
 
     second_seen = datetime.now(UTC) - timedelta(seconds=5)
     await tracker.apply(
@@ -215,6 +217,41 @@ async def test_tracker_archives_expired_aircraft(tmp_path) -> None:
     assert second_archive[0]["started_at"] == first_started
     assert second_archive[0]["lost_at"] != first_lost
     assert second_archive[0]["contact_id"] == first_archive_id
+
+
+@pytest.mark.asyncio
+async def test_archived_snapshot_keeps_flown_track(tmp_path) -> None:
+    layers = LayerManager(tmp_path)
+    layers.refresh()
+    tracker = AircraftTracker(55.0, 37.0, layers, 1, 10, 1, max_archive=2)
+    first_seen = datetime.now(UTC) - timedelta(minutes=10)
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.1,
+                lon=37.1,
+                received_at=first_seen,
+                position_at=first_seen,
+            )
+        ]
+    )
+    await tracker.apply(
+        [
+            AircraftUpdate(
+                icao="abc123",
+                lat=55.2,
+                lon=37.2,
+                received_at=first_seen + timedelta(seconds=30),
+                position_at=first_seen + timedelta(seconds=30),
+            )
+        ]
+    )
+    await tracker.prune()
+    archived = (await tracker.archived_snapshot())[0]
+    assert [point[0] for point in archived["track"]] == [55.1, 55.2]
+    snapshot = await tracker.snapshot_message()
+    assert [point[0] for point in snapshot["archived"][0]["track"]] == [55.1, 55.2]
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@
     markers: new Map(),
     archiveMarkers: new Map(),
     tracks: new Map(),
+    archiveTracks: new Map(),
     customLayers: new Map(),
     socket: null,
     reconnectTimer: null,
@@ -511,14 +512,24 @@
     const key = archiveKey(aircraft);
     if (!icao || !key) return;
     const live = state.aircraft.get(icao);
+    const previous = state.archived.get(key) || {};
+    const merged = { ...previous, ...aircraft, icao, status: "archived" };
+    if (Array.isArray(aircraft.track) || Array.isArray(aircraft.track_append)) {
+      const baseTrack = Array.isArray(aircraft.track)
+        ? aircraft.track
+        : previous.track;
+      merged.track = mergeTrackPoints(baseTrack, aircraft.track_append);
+    } else if (!Array.isArray(merged.track) && Array.isArray(live?.track)) {
+      merged.track = live.track;
+    }
     if (live && (text(live.contact_id, "") === key || !live.contact_id)) {
       state.aircraft.delete(icao);
       removeMapObjects(icao);
       if (state.selectedIcao === icao) state.selectedIcao = null;
     }
-    const merged = { ...(state.archived.get(key) || {}), ...aircraft, icao, status: "archived" };
     state.archived.set(key, merged);
     removeArchiveMarker(key);
+    updateArchiveTrack(merged);
     if (render) finishAircraftUpdate();
   }
 
@@ -527,6 +538,7 @@
     if (!key) return;
     state.archived.delete(key);
     removeArchiveMarker(key);
+    removeArchiveTrack(key);
     if (state.selectedIcao === key) state.selectedIcao = null;
     if (render) finishAircraftUpdate();
   }
@@ -544,6 +556,12 @@
     const marker = state.archiveMarkers.get(key);
     if (marker) state.map.removeLayer(marker);
     state.archiveMarkers.delete(key);
+  }
+
+  function removeArchiveTrack(key) {
+    const track = state.archiveTracks.get(key);
+    if (track) state.map.removeLayer(track);
+    state.archiveTracks.delete(key);
   }
 
   function finishAircraftUpdate() {
@@ -707,26 +725,38 @@
   }
 
   function updateTrack(aircraft) {
+    syncTrackLayer(state.tracks, aircraft.icao, aircraft, false);
+  }
+
+  function updateArchiveTrack(aircraft) {
+    const key = archiveKey(aircraft);
+    if (!key) return;
+    syncTrackLayer(state.archiveTracks, key, aircraft, true);
+  }
+
+  function syncTrackLayer(store, key, aircraft, archived) {
     if (!shouldShowContact(aircraft)) {
-      const hidden = state.tracks.get(aircraft.icao);
+      const hidden = store.get(key);
       if (hidden) state.map.removeLayer(hidden);
-      state.tracks.delete(aircraft.icao);
+      store.delete(key);
       return;
     }
     const points = normalizeTrail(
       aircraft.track ?? aircraft.trail ?? aircraft.positions ?? aircraft.track_history,
     );
-    const existing = state.tracks.get(aircraft.icao);
+    const existing = store.get(key);
     if (points.length < 2) {
       if (existing) state.map.removeLayer(existing);
-      state.tracks.delete(aircraft.icao);
+      store.delete(key);
       return;
     }
     const options = {
       color: altitudeColor(aircraftAltitude(aircraft)),
       weight: 2,
-      opacity: .65,
+      opacity: archived ? .38 : .65,
+      dashArray: archived ? "5 7" : null,
       interactive: false,
+      className: archived ? "aircraft-track is-archived" : "aircraft-track",
     };
     if (existing) {
       existing.setLatLngs(points);
@@ -734,7 +764,7 @@
     } else {
       const track = L.polyline(points, options);
       if (state.tracksVisible) track.addTo(state.map);
-      state.tracks.set(aircraft.icao, track);
+      store.set(key, track);
     }
   }
 
@@ -748,10 +778,12 @@
 
   function toggleTracks() {
     state.tracksVisible = !state.tracksVisible;
-    state.tracks.forEach((track) => {
+    const apply = (track) => {
       if (state.tracksVisible && !state.map.hasLayer(track)) track.addTo(state.map);
       if (!state.tracksVisible && state.map.hasLayer(track)) state.map.removeLayer(track);
-    });
+    };
+    state.tracks.forEach(apply);
+    state.archiveTracks.forEach(apply);
     el["toggle-tracks"].classList.toggle("is-active", state.tracksVisible);
     el["toggle-tracks"].setAttribute("aria-pressed", String(state.tracksVisible));
   }
@@ -774,6 +806,7 @@
       }
       updateTrack(aircraft);
     });
+    state.archived.forEach(updateArchiveTrack);
     renderAircraftList();
   }
 
@@ -986,6 +1019,7 @@
       const lon = lonNum(aircraft.lon ?? aircraft.lng ?? aircraft.longitude);
       if (lat !== null && lon !== null) updateMarker(aircraft, lat, lon);
     });
+    state.archived.forEach(updateArchiveTrack);
   }
 
   function typeCatalogSignature() {
